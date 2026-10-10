@@ -369,3 +369,80 @@ fn the_size_mode_is_kept_across_scans_and_applies_to_the_next_one() {
     });
     assert_eq!(mode, Some(SizeMode::Apparent));
 }
+
+/// A settings store in memory that counts its writes.
+#[derive(Clone, Default)]
+struct MemoryStore {
+    blob: Rc<std::cell::RefCell<Option<String>>>,
+    writes: Rc<std::cell::Cell<u32>>,
+}
+
+impl crate::settings::SettingsStore for MemoryStore {
+    fn load(&self) -> Option<String> {
+        self.blob.borrow().clone()
+    }
+    fn save(&self, blob: &str) {
+        *self.blob.borrow_mut() = Some(blob.to_string());
+        self.writes.set(self.writes.get() + 1);
+    }
+}
+
+#[test]
+fn settings_are_loaded_applied_and_saved_only_when_changed_and_idle() {
+    use crate::render::ColorBy;
+    use crate::settings::Settings;
+    let store = MemoryStore::default();
+    let mut stored = Settings {
+        size_mode: SizeMode::Apparent,
+        shading: Shading::Flat,
+        color_by: ColorBy::TopFolder,
+        side_split: 0.4,
+        tree_split: 0.5,
+        recent: Vec::new(),
+    };
+    stored.remember(crate::settings::RecentScan {
+        path: "/old".into(),
+        volume_name: None,
+        volume_id: None,
+    });
+    *store.blob.borrow_mut() = Some(stored.to_json());
+
+    let state = AppState::new();
+    state.use_settings_store(Box::new(store.clone()));
+    assert_eq!(state.size_mode(), SizeMode::Apparent);
+    assert_eq!(state.shading(), Shading::Flat);
+    assert_eq!(state.color_by(), ColorBy::TopFolder);
+    assert_eq!(state.side_split().get(), 0.4);
+    assert_eq!(state.tree_split().get(), 0.5);
+    assert_eq!(state.recent_scans().len(), 1);
+    assert!(
+        !state.save_settings(true),
+        "nothing changed, nothing written"
+    );
+
+    state.set_shading(Shading::Cushion);
+    assert!(!state.save_settings(false), "never while a button is held");
+    assert!(state.save_settings(true));
+    assert_eq!(store.writes.get(), 1);
+    assert!(!state.save_settings(true));
+
+    // A scan puts its target first in the recent list, which is saved too.
+    state.start_scan(usb_target(), usb_scan());
+    let recent = state.recent_scans();
+    assert_eq!(recent[0].path, usb_target().path);
+    assert_eq!(recent[0].volume_id, usb_target().volume_id);
+    assert_eq!(recent[1].path, std::path::PathBuf::from("/old"));
+    assert!(state.flush_settings());
+    let saved = Settings::from_json(&store.blob.borrow().clone().expect("blob"));
+    assert_eq!(saved.shading, Shading::Cushion);
+    assert_eq!(saved.recent, recent);
+    state.back_to_start();
+}
+
+#[test]
+fn a_state_without_a_store_never_saves() {
+    let state = AppState::new();
+    state.set_shading(Shading::Flat);
+    assert!(!state.save_settings(true));
+    assert!(!state.flush_settings());
+}

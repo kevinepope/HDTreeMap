@@ -15,6 +15,7 @@
 //! - [`platform`] — the `PlatformServices` contract, volume-list cleanup, the demo platform.
 //! - [`render`] — the treemap's palette and cushion rasteriser.
 //! - [`scan`] — `ScanSource`, live progress, and the native `FsScanner`.
+//! - [`settings`] — the remembered settings and recent scans, as a JSON blob.
 //! - [`state`] — the shared app state (screen, running scan, finished result) and the scan pump.
 //! - [`ui`] — the widget tree (start and scan screens, the treemap main view).
 
@@ -26,6 +27,7 @@ pub mod model;
 pub mod platform;
 pub mod render;
 pub mod scan;
+pub mod settings;
 pub mod state;
 pub mod ui;
 

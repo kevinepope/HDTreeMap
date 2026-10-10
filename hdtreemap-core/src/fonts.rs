@@ -66,6 +66,8 @@ pub mod fa {
     pub const CHECK_CIRCLE: char = '\u{f058}';
     /// fa-eraser — Clear Highlight.
     pub const ERASER: char = '\u{f12d}';
+    /// fa-history: the start screen's recent scans.
+    pub const HISTORY: char = '\u{f1da}';
 }
 
 /// The faces the widgets draw with.

@@ -13,11 +13,13 @@
 //! `HDTREEMAP_SCREENSHOT_FRAMES=N` sets how many frames to let settle first (default 10);
 //! `HDTREEMAP_SCREENSHOT_SHOW` opens the context menu, the trash confirmation, a menu or
 //! About first ([`show`]); `HDTREEMAP_IN_WINDOW_MENU=1` uses the in-window menu bar on
-//! macOS.
+//! macOS. Settings and the window size are remembered in the OS config directory
+//! ([`persist`]; `HDTREEMAP_SETTINGS_DIR` moves them).
 
 mod cli;
 mod dump;
 mod menu_bar;
+mod persist;
 mod platform;
 mod show;
 
@@ -106,10 +108,17 @@ fn run_app(
             .unwrap_or(10);
         config = config.with_screenshot(path, frames);
     }
+    let settings_dir = persist::settings_dir();
+    if let Some(dir) = &settings_dir {
+        config = config.with_bounds_store(persist::FileBounds::new(dir));
+    }
 
     agg_gui_shell::run(config, move |init| {
         let fonts = install_theme_and_fonts(init.device_scale()).map_err(ShellError::app)?;
         let state = AppState::new();
+        if let Some(dir) = &settings_dir {
+            state.use_settings_store(Box::new(persist::FileSettings::new(dir)));
+        }
         // macOS: the system menu bar; elsewhere the window shows its own.
         // HDTREEMAP_IN_WINDOW_MENU=1 shows the in-window one on macOS too (screenshots).
         let in_window = std::env::var_os("HDTREEMAP_IN_WINDOW_MENU").is_some();
@@ -148,8 +157,13 @@ impl ShellHost for AppHost {
     }
 
     fn on_idle(&mut self, _app: &mut App, control: &mut ShellControl<'_>) {
+        self.state.save_settings(control.pointer_idle());
         if self.state.quit_requested() {
             control.request_exit();
         }
+    }
+
+    fn on_exit(&mut self, _app: &mut App) {
+        self.state.flush_settings();
     }
 }

@@ -22,12 +22,14 @@
 //! to share, in `state/derived.rs`; the last volume list (for free space) in
 //! `state/volumes.rs`; edits after a scan (Move to Trash, Rescan Folder) in
 //! `state/edits.rs`; toasts, the confirmation and About sheets, context-menu requests and
-//! Quit in `state/notices.rs`.
+//! Quit in `state/notices.rs`; the remembered settings and recent scans in
+//! `state/persist.rs`.
 
 mod derived;
 mod edits;
 mod live;
 mod notices;
+mod persist;
 mod pump;
 mod view;
 mod volumes;
@@ -150,6 +152,7 @@ struct Inner {
     rescan: RefCell<Option<edits::RescanJob>>,
     notices: notices::Notices,
     live: live::LiveMap,
+    persist: persist::Persistence,
 }
 
 /// Everything the UI reads and writes. Cheap to clone; clones share the same state.
@@ -174,6 +177,7 @@ impl AppState {
                 rescan: RefCell::new(None),
                 notices: notices::Notices::default(),
                 live: live::LiveMap::default(),
+                persist: persist::Persistence::default(),
             }),
         }
     }
@@ -202,6 +206,7 @@ impl AppState {
         *self.inner.scan.borrow_mut() = Some(source);
         self.inner.last_progress.set(None);
         self.reset_view();
+        self.remember_scan(&target);
         pump::register(&self.inner);
         self.set_screen(Screen::Scanning(target));
     }

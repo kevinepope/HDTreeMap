@@ -11,13 +11,15 @@ use agg_gui::widget::find_widget_by_id;
 use agg_gui::Size;
 use common::{fake, scanning_state, volume, Harness, GB};
 use hdtreemap_core::platform::DemoPlatform;
+use hdtreemap_core::settings::{RecentScan, Settings};
 use hdtreemap_core::state::{ScanTarget, Screen};
 use hdtreemap_core::ui::main_view::MAIN_VIEW_ID;
 use hdtreemap_core::ui::scan_strip::{CANCEL_BUTTON_ID, SCAN_STRIP_ID};
 use hdtreemap_core::ui::start_screen::{
-    volume_card_id, CHOOSE_FOLDER_ID, DEMO_BANNER_ID, DEMO_NOTE_ID, NO_VOLUMES_ID, START_SCREEN_ID,
-    SUBTITLE_ID,
+    recent_item_id, volume_card_id, CHOOSE_FOLDER_ID, DEMO_BANNER_ID, DEMO_NOTE_ID, NO_VOLUMES_ID,
+    RECENT_ID, START_SCREEN_ID, SUBTITLE_ID,
 };
+use hdtreemap_core::AppState;
 
 #[test]
 fn native_start_screen_lists_volumes_and_offers_choose_folder() {
@@ -149,4 +151,60 @@ fn the_subtitle_offers_folders_only_where_they_can_be_chosen() {
     let (platform, _) = fake(vec![volume("Disk", "/", 10 * GB, 5 * GB)], None);
     let native = Harness::new(Rc::new(platform));
     assert!(native.label_text(SUBTITLE_ID).contains("folder"));
+}
+
+#[test]
+fn recent_scans_are_listed_and_scan_again_when_clicked() {
+    let (platform, _) = fake(
+        vec![volume("Backup", "/Volumes/Backup", 2000 * GB, 1900 * GB)],
+        None,
+    );
+    let state = AppState::new();
+    let mut settings = Settings::default();
+    settings.remember(RecentScan {
+        path: PathBuf::from("/Volumes/Backup"),
+        volume_name: Some("Backup".into()),
+        volume_id: Some("/Volumes/Backup".into()),
+    });
+    settings.remember(RecentScan {
+        path: PathBuf::from("/Users/me/Code"),
+        volume_name: None,
+        volume_id: None,
+    });
+    state.apply_settings(&settings);
+    let mut h = Harness::with_state(state, Rc::new(platform));
+    h.resize(1200.0, 1000.0);
+    assert!(h.visible(RECENT_ID));
+    assert!(h.visible(&recent_item_id(0)));
+    assert!(h.visible(&recent_item_id(1)));
+    assert!(!h.visible(&recent_item_id(2)));
+
+    // The folder scans as a folder.
+    h.click(&recent_item_id(0));
+    assert_eq!(
+        h.state.screen(),
+        Screen::Scanning(ScanTarget::folder("/Users/me/Code"))
+    );
+    h.state.cancel_scan();
+    h.frame();
+    // The drive, still listed, scans as that drive (with its used and free space); it was
+    // the second entry and the folder is now first.
+    assert_eq!(
+        h.state.recent_scans()[0].path,
+        PathBuf::from("/Users/me/Code")
+    );
+    h.click(&recent_item_id(1));
+    let Screen::Scanning(target) = h.state.screen() else {
+        panic!("no scan: {:?}", h.state.screen());
+    };
+    assert_eq!(target.volume_name.as_deref(), Some("Backup"));
+    assert_eq!(target.free_bytes, Some(1900 * GB));
+    h.state.cancel_scan();
+}
+
+#[test]
+fn nothing_scanned_before_shows_no_recent_section() {
+    let (platform, _) = fake(vec![volume("Disk", "/", 10 * GB, 5 * GB)], None);
+    let h = Harness::new(Rc::new(platform));
+    assert!(!h.visible(RECENT_ID));
 }

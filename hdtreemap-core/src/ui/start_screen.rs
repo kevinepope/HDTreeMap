@@ -1,7 +1,8 @@
 //! The start screen: app title, one card per mounted volume (name, optional description,
-//! mount path, used/free bar, used/total text; the whole card is clickable), and below the
-//! list either "Choose Folder…" (native) or, on the browser demo, a note that the drives
-//! are simulated plus a banner at the top.
+//! mount path, used/free bar, used/total text; the whole card is clickable), the recently
+//! scanned folders and drives (up to five, remembered across runs, `settings.rs`), and below
+//! the list either "Choose Folder…" (native) or, on the browser demo, a note that the
+//! drives are simulated plus a banner at the top.
 //!
 //! Picking a volume or a folder starts a scan of it (the platform's `scan_source`) through
 //! `AppState::start_scan`; the root `Rebuilder` (`ui/mod.rs`) then shows the scan screen.
@@ -10,13 +11,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    current_visuals, Button, Clickable, Color, Container, FlexColumn, FlexRow, HAnchor, Insets,
-    Label, ProgressBar, ScrollView, Size, Spacer, VAnchor, Widget,
+    current_visuals, Button, Clickable, Color, Container, EllipsisMode, FlexColumn, FlexRow,
+    HAnchor, Insets, Label, ProgressBar, ScrollView, Size, Spacer, VAnchor, Widget,
 };
 
 use crate::fonts::{fa, Fonts};
 use crate::format::{format_bytes, used_fraction};
 use crate::platform::{PlatformServices, VolumeInfo};
+use crate::settings::RecentScan;
 use crate::state::{AppState, ScanTarget};
 use crate::APP_TITLE;
 
@@ -32,6 +34,8 @@ pub const DEMO_NOTE_ID: &str = "demo-note";
 pub const NO_VOLUMES_ID: &str = "no-volumes";
 /// Widget id of the line under the title.
 pub const SUBTITLE_ID: &str = "start-subtitle";
+/// Widget id of the "Recent" heading (shown when something was scanned before).
+pub const RECENT_ID: &str = "recent";
 
 /// Text of the browser-demo note that replaces "Choose Folder…".
 pub const DEMO_NOTE_TEXT: &str = "Browser demo: pick a simulated drive.";
@@ -48,6 +52,31 @@ const NEARLY_FULL: f64 = 0.9;
 /// Widget id of the `index`-th volume card (clicking it scans the volume).
 pub fn volume_card_id(index: usize) -> String {
     format!("volume-card-{index}")
+}
+
+/// Widget id of the `index`-th recent scan (clicking it scans that again).
+pub fn recent_item_id(index: usize) -> String {
+    format!("recent-{index}")
+}
+
+/// What to scan for a recent entry: the listed drive with that id (so the progress bar and
+/// free space are known), else the path as it was named.
+pub fn recent_target(recent: &RecentScan, volumes: &[VolumeInfo]) -> ScanTarget {
+    let listed = recent.volume_id.as_ref().and_then(|id| {
+        volumes
+            .iter()
+            .find(|v| &v.id == id && v.mount_path == recent.path)
+    });
+    match listed {
+        Some(volume) => ScanTarget::volume(volume),
+        None => ScanTarget {
+            path: recent.path.clone(),
+            volume_name: recent.volume_name.clone(),
+            volume_id: recent.volume_id.clone(),
+            expected_bytes: None,
+            free_bytes: None,
+        },
+    }
 }
 
 /// "120.0 GB used of 512.0 GB · 392.0 GB free".
@@ -177,7 +206,89 @@ fn build_volume_list(
     for (index, volume) in volumes.iter().enumerate() {
         list = list.add(build_volume_card(state, platform, index, volume, fonts));
     }
+    let recent = state.recent_scans();
+    if !recent.is_empty() {
+        list = list.add(Box::new(
+            Label::new("Recent", Arc::clone(&fonts.ui))
+                .with_font_size(16.0)
+                .with_strong(true)
+                .with_margin(Insets {
+                    top: 8.0,
+                    ..Insets::default()
+                })
+                .with_name(RECENT_ID),
+        ));
+        for (index, scan) in recent.iter().enumerate() {
+            let target = recent_target(scan, volumes);
+            list = list.add(build_recent_row(
+                state, platform, index, scan, target, fonts,
+            ));
+        }
+    }
     Box::new(ScrollView::new(Box::new(list)).with_h_anchor(HAnchor::STRETCH))
+}
+
+/// One recent scan: an icon, its name and (for a drive) its path; clicking scans it again.
+fn build_recent_row(
+    state: &AppState,
+    platform: &Rc<dyn PlatformServices>,
+    index: usize,
+    scan: &RecentScan,
+    target: ScanTarget,
+    fonts: &Fonts,
+) -> Box<dyn Widget> {
+    let visuals = current_visuals();
+    let icon = if scan.volume_name.is_some() {
+        fa::HDD
+    } else {
+        fa::FOLDER
+    };
+    let mut row = FlexRow::new()
+        .with_gap(10.0)
+        .with_h_anchor(HAnchor::STRETCH)
+        .add(Box::new(
+            Label::new(icon.to_string(), Arc::clone(&fonts.ui))
+                .with_font_size(15.0)
+                .with_dim(true)
+                .with_v_anchor(VAnchor::CENTER),
+        ))
+        .add(Box::new(
+            Label::new(scan.display_name(), Arc::clone(&fonts.ui))
+                .with_font_size(14.0)
+                .with_v_anchor(VAnchor::CENTER),
+        ));
+    if scan.volume_name.is_some() {
+        row = row.add_flex(
+            Box::new(
+                Label::new(
+                    scan.path.to_string_lossy().into_owned(),
+                    Arc::clone(&fonts.ui),
+                )
+                .with_font_size(12.0)
+                .with_dim(true)
+                .with_ellipsis_mode(EllipsisMode::PathMiddle)
+                .with_h_anchor(HAnchor::STRETCH)
+                .with_v_anchor(VAnchor::CENTER),
+            ),
+            1.0,
+        );
+    }
+    let content = Container::new()
+        .with_fit_height(true)
+        .with_inner_padding(Insets::symmetric(12.0, 6.0))
+        .with_h_anchor(HAnchor::STRETCH)
+        .add(Box::new(row));
+    let scan_state = state.clone();
+    let scan_platform = Rc::clone(platform);
+    Box::new(
+        Clickable::new(Box::new(content))
+            .with_background(visuals.widget_bg)
+            .with_corner_radius(CARD_RADIUS)
+            .with_h_anchor(HAnchor::STRETCH)
+            .on_click(move || start_scan(&scan_state, &scan_platform, target.clone()))
+            .with_tooltip(scan.path.to_string_lossy().into_owned())
+            .with_name(recent_item_id(index)),
+    )
 }
 
 fn build_volume_card(
