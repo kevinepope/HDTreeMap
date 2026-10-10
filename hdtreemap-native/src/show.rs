@@ -9,6 +9,8 @@
 //!   on macOS, where the system bar is used otherwise);
 //! - `about`: open the About sheet;
 //! - `color-folder`: click the toolbar's "By Folder" switch (colour by top-level folder);
+//! - `hover`: click a spot on the map (selecting it opens the folder tree down to it), then
+//!   rest the pointer there until its tooltip shows (for the README);
 //! - `toast`: right-click the map and choose the first row (Reveal): with `--demo` that is
 //!   simulated and reports itself in a toast.
 //!
@@ -31,6 +33,7 @@ pub enum Show {
     About,
     ColorFolder,
     Toast,
+    Hover,
 }
 
 impl Show {
@@ -43,6 +46,7 @@ impl Show {
             "about" => Some(Show::About),
             "color-folder" => Some(Show::ColorFolder),
             "toast" => Some(Show::Toast),
+            "hover" => Some(Show::Hover),
             _ => None,
         }
     }
@@ -91,6 +95,27 @@ impl Script {
                 }
             }
             (Show::About, 5) => state.show_about(),
+            (Show::Hover, 5) => {
+                if let Some(map) = find_widget_screen_rect(app.root(), TREEMAP_ID) {
+                    let (fx, fy) = hover_point();
+                    let (x, y) = centre_down(app, map, fx, fy);
+                    app.on_mouse_move(x, y);
+                    app.on_mouse_down(x, y, MouseButton::Left, Modifiers::default());
+                    app.on_mouse_up(x, y, MouseButton::Left, Modifiers::default());
+                }
+            }
+            // Two moves a frame apart, as a real pointer comes to rest. The tip stays up
+            // until the capture (however many frames that takes) instead of auto-hiding.
+            (Show::Hover, 8 | 9) => {
+                let mut timings = agg_gui::widgets::tooltip_timings();
+                timings.autopop = std::time::Duration::from_secs(3600);
+                agg_gui::widgets::set_tooltip_timings(timings);
+                if let Some(map) = find_widget_screen_rect(app.root(), TREEMAP_ID) {
+                    let (fx, fy) = hover_point();
+                    let (x, y) = centre_down(app, map, fx, fy);
+                    app.on_mouse_move(x + f64::from(self.step - 8), y);
+                }
+            }
             (Show::ColorFolder, 5) => {
                 if let Some(switch) = find_widget_screen_rect(app.root(), COLOR_BY_ID) {
                     let (x, y) = centre_down(app, switch, 0.75, 0.5);
@@ -102,6 +127,18 @@ impl Script {
             _ => {}
         }
     }
+}
+
+/// Where `hover` points, as fractions of the map: `HDTREEMAP_SCREENSHOT_AT=fx,fy`, else
+/// a little left of and above the middle.
+fn hover_point() -> (f64, f64) {
+    std::env::var("HDTREEMAP_SCREENSHOT_AT")
+        .ok()
+        .and_then(|v| {
+            let (x, y) = v.split_once(',')?;
+            Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+        })
+        .unwrap_or((0.4, 0.35))
 }
 
 /// Click the open context menu's row that `pick` names from its labels.
