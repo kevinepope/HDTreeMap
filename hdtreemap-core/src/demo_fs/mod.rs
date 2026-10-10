@@ -164,11 +164,13 @@ impl DemoScanner {
             }
             DemoPace::Unpaced => None,
         };
+        let progress = Arc::new(ScanProgress::new());
+        progress.set_expected_entries(profile.approx_entries());
         Self {
             profile,
             root,
             generator,
-            progress: Arc::new(ScanProgress::new()),
+            progress,
             rate,
             emitted: 0,
             started: Instant::now(),

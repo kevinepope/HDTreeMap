@@ -22,6 +22,8 @@ pub struct ScanProgress {
     dirs: AtomicU64,
     bytes: AtomicU64,
     errors: AtomicU64,
+    /// About how many entries (files and folders) the scan will find; 0 when unknown.
+    expected_entries: AtomicU64,
     current_path: Mutex<String>,
     started: Instant,
     done: AtomicBool,
@@ -36,6 +38,9 @@ pub struct ProgressSnapshot {
     /// Allocated bytes seen so far.
     pub bytes: u64,
     pub errors: u64,
+    /// About how many entries the scan will find (0: unknown), set by sources that know
+    /// (the demo's profiles).
+    pub expected_entries: u64,
     pub elapsed: Duration,
     pub current_path: String,
     pub done: bool,
@@ -49,6 +54,7 @@ impl ScanProgress {
             dirs: AtomicU64::new(0),
             bytes: AtomicU64::new(0),
             errors: AtomicU64::new(0),
+            expected_entries: AtomicU64::new(0),
             current_path: Mutex::new(String::new()),
             started: Instant::now(),
             done: AtomicBool::new(false),
@@ -70,6 +76,11 @@ impl ScanProgress {
 
     pub fn add_dir(&self) {
         self.dirs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Say about how many entries the scan will find, for [`ProgressSnapshot::fraction`].
+    pub fn set_expected_entries(&self, entries: u64) {
+        self.expected_entries.store(entries, Ordering::Relaxed);
     }
 
     pub fn add_error(&self) {
@@ -109,9 +120,27 @@ impl ScanProgress {
             dirs: self.dirs.load(Ordering::Relaxed),
             bytes: self.bytes.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
+            expected_entries: self.expected_entries.load(Ordering::Relaxed),
             elapsed: self.elapsed(),
             current_path: lock(&self.current_path).clone(),
             done: self.is_done(),
+        }
+    }
+}
+
+impl ProgressSnapshot {
+    /// Estimated share of the scan done, in `0.0..=1.0`, given the bytes it should find
+    /// (`expected_bytes`, a volume's used space; 0 when unknown). Bytes alone under-read
+    /// while the scan is in folders of many small files and jump on a few huge ones, so
+    /// when the source also knows its entry count the two shares are averaged. `None` when
+    /// neither is known.
+    pub fn fraction(&self, expected_bytes: u64) -> Option<f64> {
+        let share = |done: u64, of: u64| (of > 0).then(|| (done as f64 / of as f64).min(1.0));
+        let bytes = share(self.bytes, expected_bytes);
+        let entries = share(self.files + self.dirs, self.expected_entries);
+        match (bytes, entries) {
+            (Some(b), Some(e)) => Some((b + e) / 2.0),
+            (one, other) => one.or(other),
         }
     }
 }
@@ -188,6 +217,25 @@ impl ScanErrors {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_fraction_blends_bytes_and_entries() {
+        let mut s = super::ProgressSnapshot {
+            files: 90,
+            dirs: 10,
+            bytes: 800,
+            ..Default::default()
+        };
+        assert_eq!(s.fraction(0), None);
+        assert_eq!(s.fraction(1000), Some(0.8));
+        s.expected_entries = 400;
+        assert_eq!(s.fraction(0), Some(0.25));
+        assert_eq!(s.fraction(1000), Some((0.8 + 0.25) / 2.0));
+        // Never past 1, however far the estimates are off.
+        s.bytes = 5000;
+        s.expected_entries = 10;
+        assert_eq!(s.fraction(1000), Some(1.0));
+    }
+
     use super::*;
 
     #[test]

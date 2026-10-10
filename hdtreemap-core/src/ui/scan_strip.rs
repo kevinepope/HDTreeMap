@@ -1,7 +1,8 @@
 //! The scan strip: a compact bar across the top of the results view while a scan runs and
 //! the map fills in below it (the live map, `state/live.rs`). It shows a spinner, what is
 //! being scanned, the live counters (files, folders, bytes on disk, unreadable, elapsed),
-//! a progress bar when the expected size is known (a volume's used space), the folder
+//! a progress bar when the expected size is known (a volume's used space; blended with
+//! the entry count when the source estimates one, `ProgressSnapshot::fraction`), the folder
 //! being read, and Cancel (back to the start screen).
 //!
 //! [`build`] returns the strip while a scan runs and nothing once it is done, keyed on
@@ -147,8 +148,11 @@ fn build_live(state: &AppState, target: &ScanTarget, fonts: &Fonts) -> Box<dyn W
         .with_gap(12.0)
         .with_h_anchor(HAnchor::STRETCH)
         .add(Box::new(counters));
-    if let Some(expected) = target.expected_bytes.filter(|&e| e > 0) {
-        let fraction = (snapshot.bytes as f64 / expected as f64).min(MAX_ESTIMATED_FRACTION);
+    if let Some(fraction) = target
+        .expected_bytes
+        .and_then(|expected| snapshot.fraction(expected))
+    {
+        let fraction = fraction.min(MAX_ESTIMATED_FRACTION);
         top = top.add(Box::new(
             ProgressBar::new(fraction, Arc::clone(&fonts.ui))
                 .with_min_size(Size::new(BAR_WIDTH, 0.0))

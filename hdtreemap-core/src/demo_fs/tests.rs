@@ -223,3 +223,61 @@ fn a_cancelled_demo_scan_stops() {
     ));
     assert_eq!(scanner.progress().snapshot().files, 0);
 }
+
+#[test]
+fn the_live_map_shows_a_mix_of_top_level_folders_early() {
+    for profile in [DemoProfile::ArchiveServer, DemoProfile::DevWorkstation] {
+        let mut scanner = DemoScanner::new(profile, DemoPace::Unpaced);
+        // The first 3% of the entries.
+        let early = profile.approx_entries() * 3 / 100;
+        while scanner.progress().snapshot().files + scanner.progress().snapshot().dirs < early {
+            assert!(!scanner.step(CHUNK));
+        }
+        let tree = scanner.partial_tree().expect("partial tree");
+        let total = tree.total().allocated.max(1);
+        let sizes: Vec<u64> = tree
+            .children(tree.root())
+            .filter(|&c| tree.node(c).is_some_and(|n| n.is_dir()))
+            .map(|c| tree.size(c))
+            .collect();
+        let growing = sizes.iter().filter(|&&s| s > 0).count();
+        let finished = generate(profile).tree;
+        let with_data = finished
+            .children(finished.root())
+            .filter(|&c| finished.node(c).is_some_and(|n| n.is_dir()) && finished.size(c) > 0)
+            .count();
+        assert!(with_data >= 4, "{profile:?}: {with_data} top-level folders");
+        assert_eq!(
+            growing, with_data,
+            "{profile:?}: every top-level folder has data early"
+        );
+        let largest = sizes.iter().copied().max().unwrap_or(0);
+        assert!(
+            (largest as f64) / (total as f64) < 0.9,
+            "{profile:?}: one folder holds {largest} of {total}"
+        );
+    }
+}
+
+#[test]
+fn demo_progress_tracks_entries_as_well_as_bytes() {
+    let mut scanner = DemoScanner::new(DemoProfile::ArchiveServer, DemoPace::Unpaced);
+    let expected = DemoProfile::ArchiveServer.used_bytes();
+    let mut checked = 0;
+    while !scanner.step(50_000) {
+        let snap = scanner.progress().snapshot();
+        assert_eq!(
+            snap.expected_entries,
+            DemoProfile::ArchiveServer.approx_entries()
+        );
+        let entries = (snap.files + snap.dirs) as f64 / snap.expected_entries as f64;
+        let fraction = snap.fraction(expected).expect("fraction");
+        // Within reach of the entry share: the bar moves with the work done.
+        assert!(
+            (fraction - entries).abs() < 0.25,
+            "{fraction} vs {entries} entries"
+        );
+        checked += 1;
+    }
+    assert!(checked > 10);
+}

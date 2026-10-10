@@ -33,7 +33,8 @@ pub fn root(_rng: &mut Rng, bytes: u64, _arg: u32) -> Vec<Entry> {
             ("mail", 35, mail, 0),
             ("git-mirrors", 25, git_mirrors, 0),
             ("vm-images", 10, vm_images, 0),
-            // Last, so a byte-based progress estimate climbs evenly rather than jumping.
+            // Most of the bytes in a few huge files (the engine interleaves the top-level
+            // folders, so the order here does not shape the live map).
             ("backups", 700, backups, 0),
         ],
     );

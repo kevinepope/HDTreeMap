@@ -1,13 +1,20 @@
 //! The streaming engine behind the demo scanner: turns a profile's recipe into tree entries,
-//! a bounded chunk per [`Generator::step`], depth first.
+//! a bounded chunk per [`Generator::step`].
 //!
 //! A recipe describes a directory as a function that, given the directory's byte budget,
 //! lists its children ([`Entry`]): files with their sizes, and subdirectories with their own
-//! budget and recipe. The engine keeps a stack of open directories, each with its remaining
-//! children; a step pops entries off it and adds them to the `TreeBuilder`, expanding a
-//! subdirectory's recipe only when it is reached. So memory stays bounded by the depth of
-//! the tree, and because every random draw happens in the same order however the work is
-//! sliced, generating in chunks yields exactly the same tree as generating in one go.
+//! budget and recipe. The root's children are added first. Each top-level folder then
+//! becomes a *lane*: a stack of open directories, each with its remaining children, walked
+//! depth first, expanding a subdirectory's recipe only when it is reached. So memory stays
+//! bounded by the depth of the tree times the (few) top-level folders.
+//!
+//! The lanes take turns of [`TURN`] entries, and each turn goes to the lane that has
+//! generated the smallest share of its byte budget. Every top-level folder therefore grows
+//! at about the same rate, and the live map during a demo scan looks like a scaled-down
+//! version of the finished one (a varied mix from the start) rather than filling one
+//! folder at a time. Each lane draws from its own random stream (seeded from the drive's
+//! seed and the lane's position), and the turn state carries over between steps, so the
+//! tree is the same whatever order the lanes run in and however the work is sliced.
 
 use std::path::Path;
 
@@ -43,20 +50,60 @@ const BLOCK: u64 = 4096;
 /// What the simulated OS reports for an unreadable directory.
 const LOCKED_MESSAGE: &str = "Permission denied (simulated)";
 
+/// Entries a lane generates before the next lane is picked.
+pub const TURN: u64 = 64;
+
+/// The seed of lane `index`'s random stream.
+fn lane_seed(seed: u64, index: usize) -> u64 {
+    seed ^ (index as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03)
+}
+
 struct Frame {
     node: NodeId,
     entries: std::vec::IntoIter<Entry>,
-    /// Length of `Generator::path` before this directory's name was appended.
+    /// Length of the lane's path before this directory's name was appended.
     path_len: usize,
+}
+
+/// One top-level folder being generated. See the module docs.
+struct Lane {
+    rng: Rng,
+    stack: Vec<Frame>,
+    /// Path of the lane's deepest open directory, kept incrementally for the progress
+    /// display.
+    path: String,
+    /// The folder's byte budget, and the allocated bytes generated in it so far.
+    budget: u64,
+    generated: u64,
+}
+
+impl Lane {
+    /// Whether this lane has generated a smaller share of its budget than `other`.
+    fn behind(&self, other: &Lane) -> bool {
+        // generated / budget < other.generated / other.budget, without division.
+        u128::from(self.generated) * u128::from(other.budget.max(1))
+            < u128::from(other.generated) * u128::from(self.budget.max(1))
+    }
 }
 
 /// A demo tree being generated. See the module docs.
 pub struct Generator {
+    seed: u64,
+    /// Draws for the root's own files (sizes) and locked folders.
     rng: Rng,
     builder: Option<TreeBuilder>,
-    stack: Vec<Frame>,
-    /// Path of the deepest open directory, kept incrementally for the progress display.
-    path: String,
+    /// The root's children not yet added.
+    root_entries: std::vec::IntoIter<Entry>,
+    root_name: String,
+    /// Top-level folders still being generated, in the order they were listed.
+    lanes: Vec<Lane>,
+    /// Lanes created so far (each one's seed index).
+    lanes_started: usize,
+    /// The lane taking the current turn, and how many entries the turn has left.
+    turn: Option<usize>,
+    turn_left: u64,
+    /// The path shown as being read.
+    current: String,
     errors: ScanErrors,
 }
 
@@ -67,16 +114,17 @@ impl Generator {
         let mut rng = Rng::new(seed);
         let builder = TreeBuilder::new(root_name);
         let entries = expand(&mut rng, bytes, 0);
-        let root = builder.root();
         Self {
+            seed,
             rng,
             builder: Some(builder),
-            stack: vec![Frame {
-                node: root,
-                entries: entries.into_iter(),
-                path_len: 0,
-            }],
-            path: root_name.to_string(),
+            root_entries: entries.into_iter(),
+            root_name: root_name.to_string(),
+            lanes: Vec::new(),
+            lanes_started: 0,
+            turn: None,
+            turn_left: 0,
+            current: root_name.to_string(),
             errors: ScanErrors::default(),
         }
     }
@@ -91,25 +139,88 @@ impl Generator {
         let mut files = 0u64;
         let mut file_bytes = 0u64;
         while added < max_entries {
-            let Some(frame) = self.stack.last_mut() else {
-                break;
+            // The root's own children first: the top-level folders open as lanes.
+            if let Some(entry) = self.root_entries.next() {
+                added += 1;
+                let root = builder.root();
+                match entry {
+                    Entry::File { name, bytes } => {
+                        let sizes = block_sizes(&mut self.rng, bytes);
+                        builder.add_file(root, &name, sizes, NodeFlags::empty());
+                        files += 1;
+                        file_bytes += sizes.allocated;
+                    }
+                    Entry::Dir {
+                        name,
+                        bytes,
+                        expand,
+                        arg,
+                    } => {
+                        let node = builder.add_dir(root, &name);
+                        progress.add_dir();
+                        let mut rng = Rng::new(lane_seed(self.seed, self.lanes_started));
+                        self.lanes_started += 1;
+                        let entries = expand(&mut rng, bytes, arg);
+                        let path = format!("{}/{}", self.root_name, name);
+                        self.lanes.push(Lane {
+                            rng,
+                            stack: vec![Frame {
+                                node,
+                                entries: entries.into_iter(),
+                                path_len: path.len(),
+                            }],
+                            path,
+                            budget: bytes,
+                            generated: 0,
+                        });
+                    }
+                    Entry::Locked { name } => {
+                        let path = format!("{}/{}", self.root_name, name);
+                        lock(builder, root, &name, &path, progress, &mut self.errors);
+                    }
+                }
+                continue;
+            }
+            let index = match self.turn.filter(|_| self.turn_left > 0) {
+                Some(index) => index,
+                None => {
+                    let Some(index) = (0..self.lanes.len()).reduce(|best, i| {
+                        if self.lanes[i].behind(&self.lanes[best]) {
+                            i
+                        } else {
+                            best
+                        }
+                    }) else {
+                        break;
+                    };
+                    self.turn = Some(index);
+                    self.turn_left = TURN;
+                    index
+                }
+            };
+            let lane = &mut self.lanes[index];
+            let Some(frame) = lane.stack.last_mut() else {
+                // The lane is finished: the next turn picks among the others.
+                self.lanes.remove(index);
+                self.turn = None;
+                continue;
             };
             let parent = frame.node;
             let Some(entry) = frame.entries.next() else {
                 let len = frame.path_len;
-                self.stack.pop();
-                if !self.stack.is_empty() {
-                    self.path.truncate(len);
-                }
+                lane.stack.pop();
+                lane.path.truncate(len);
                 continue;
             };
             added += 1;
+            self.turn_left -= 1;
             match entry {
                 Entry::File { name, bytes } => {
-                    let sizes = block_sizes(&mut self.rng, bytes);
+                    let sizes = block_sizes(&mut lane.rng, bytes);
                     builder.add_file(parent, &name, sizes, NodeFlags::empty());
                     files += 1;
                     file_bytes += sizes.allocated;
+                    lane.generated += sizes.allocated;
                 }
                 Entry::Dir {
                     name,
@@ -119,36 +230,32 @@ impl Generator {
                 } => {
                     let node = builder.add_dir(parent, &name);
                     progress.add_dir();
-                    let path_len = self.path.len();
-                    self.path.push('/');
-                    self.path.push_str(&name);
-                    let entries = expand(&mut self.rng, bytes, arg);
-                    self.stack.push(Frame {
+                    let path_len = lane.path.len();
+                    lane.path.push('/');
+                    lane.path.push_str(&name);
+                    let entries = expand(&mut lane.rng, bytes, arg);
+                    lane.stack.push(Frame {
                         node,
                         entries: entries.into_iter(),
                         path_len,
                     });
                 }
                 Entry::Locked { name } => {
-                    let node = builder.add_dir(parent, &name);
-                    builder.mark(node, NodeFlags::ERROR);
-                    progress.add_dir();
-                    progress.add_error();
-                    let path = format!("{}/{}", self.path, name);
-                    self.errors.record(Path::new(&path), LOCKED_MESSAGE);
+                    let path = format!("{}/{}", lane.path, name);
+                    lock(builder, parent, &name, &path, progress, &mut self.errors);
                 }
             }
+            self.current.clone_from(&lane.path);
         }
         progress.add_files(files, file_bytes);
-        progress.set_current_path(&self.path);
-        self.stack.is_empty()
+        progress.set_current_path(&self.current);
+        self.is_done()
     }
 
     /// Whether every entry has been generated.
     pub fn is_done(&self) -> bool {
-        self.stack.is_empty()
+        self.root_entries.len() == 0 && self.lanes.iter().all(|l| l.stack.is_empty())
     }
-
     /// The tree so far (partial totals are correct while generating).
     pub fn tree(&self) -> Option<&Tree> {
         self.builder.as_ref().map(TreeBuilder::tree)
@@ -182,6 +289,22 @@ impl Generator {
         let builder = self.builder.take()?;
         Some((builder.finish_sorted(), std::mem::take(&mut self.errors)))
     }
+}
+
+/// Add the unreadable folder `name` (at `path`) under `parent`, counted as an error.
+fn lock(
+    builder: &mut TreeBuilder,
+    parent: NodeId,
+    name: &str,
+    path: &str,
+    progress: &ScanProgress,
+    errors: &mut ScanErrors,
+) {
+    let node = builder.add_dir(parent, name);
+    builder.mark(node, NodeFlags::ERROR);
+    progress.add_dir();
+    progress.add_error();
+    errors.record(Path::new(path), LOCKED_MESSAGE);
 }
 
 /// Sizes of a simulated file of about `bytes`: allocated is rounded to the nearest whole

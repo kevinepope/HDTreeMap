@@ -345,7 +345,7 @@ fn clicking_a_legend_row_highlights_its_files_on_the_map() {
         painted
     );
     let text = h.label_text(STATUS_HIGHLIGHT_ID);
-    assert!(text.starts_with("Highlighting .jpg: 170 files, "), "{text}");
+    assert!(text.starts_with("Highlighting .jpg: 164 files, "), "{text}");
     assert_eq!(Some(text), highlight_text(&h.state));
 
     // Clicking the row again clears it.
