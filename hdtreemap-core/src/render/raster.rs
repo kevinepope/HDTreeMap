@@ -58,7 +58,8 @@ const FLAT_EDGE: f32 = 0.6;
 /// Flat rectangles narrower than this get no edge line (it would swallow them).
 const FLAT_EDGE_MIN: u32 = 3;
 
-/// The colour of pixels no rectangle covers (an empty zoom root).
+/// The default colour of pixels no rectangle covers (an empty zoom root); a palette made
+/// for a theme carries its own ([`Palette::background`]).
 pub const BACKGROUND: [u8; 4] = [32, 32, 32, 255];
 
 /// Rows per band of parallel work.
@@ -99,11 +100,12 @@ pub fn rasterise(
         }
     });
 
+    let background = palette.background();
     let paint_band = |(band, chunk): (usize, &mut [u8])| {
         let first_row = band as u32 * BAND_ROWS;
         let rows = (chunk.len() / row_bytes) as u32;
         for px in chunk.chunks_exact_mut(4) {
-            px.copy_from_slice(&BACKGROUND);
+            px.copy_from_slice(&background);
         }
         for &leaf in bins.cell(band) {
             let (rect, color) = &leaves[leaf as usize];

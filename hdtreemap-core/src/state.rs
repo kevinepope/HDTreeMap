@@ -23,7 +23,7 @@
 //! `state/volumes.rs`; edits after a scan (Move to Trash, Rescan Folder) in
 //! `state/edits.rs`; toasts, the confirmation and About sheets, context-menu requests and
 //! Quit in `state/notices.rs`; the remembered settings and recent scans in
-//! `state/persist.rs`.
+//! `state/persist.rs`; the theme (light, dark or the OS appearance) in `state/theme.rs`.
 
 mod derived;
 mod edits;
@@ -31,6 +31,7 @@ mod live;
 mod notices;
 mod persist;
 mod pump;
+mod theme;
 mod view;
 mod volumes;
 
@@ -153,6 +154,7 @@ struct Inner {
     notices: notices::Notices,
     live: live::LiveMap,
     persist: persist::Persistence,
+    theme: theme::ThemeState,
 }
 
 /// Everything the UI reads and writes. Cheap to clone; clones share the same state.
@@ -178,6 +180,7 @@ impl AppState {
                 notices: notices::Notices::default(),
                 live: live::LiveMap::default(),
                 persist: persist::Persistence::default(),
+                theme: theme::ThemeState::default(),
             }),
         }
     }
@@ -388,3 +391,5 @@ impl Default for AppState {
 mod tests;
 #[cfg(test)]
 mod tests_edits;
+#[cfg(test)]
+mod tests_theme;

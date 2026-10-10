@@ -4,7 +4,7 @@
 //! - [`AppState::palette`] — the map's colours (`render/palette.rs`): by extension, rebuilt
 //!   when the tree changes; by top-level folder, also when the zoom root changes. The
 //!   treemap paints with it and the legend draws its swatches from it, so the two can never
-//!   disagree.
+//!   disagree. Its greys follow the light or dark look, so it is rebuilt when that flips.
 //! - [`AppState::zoom_extensions`] — the [`ExtTable`] of the map's zoom root, rebuilt when the
 //!   tree or the zoom root changes. The extension legend lists it and the status bar's
 //!   highlight note reads its totals.
@@ -17,12 +17,14 @@ use web_time::Instant;
 use super::AppState;
 use crate::model::{ExtTable, NodeId};
 use crate::render::{stats_enabled, ColorBy, Palette};
+use crate::theme::map_tones;
 
 /// What a zoom root's extension table depends on: `(tree_version, zoom root)`.
 type ZoomKey = (u64, NodeId);
 
-/// What the palette depends on: the tree version, the scheme, and (by folder) the zoom root.
-type PaletteKey = (u64, ColorBy, NodeId);
+/// What the palette depends on: the tree version, the scheme, (by folder) the zoom root,
+/// and whether the look is dark (its greys, `theme::map_tones`).
+type PaletteKey = (u64, ColorBy, NodeId, bool);
 
 /// See the module docs.
 #[derive(Default)]
@@ -43,19 +45,22 @@ impl AppState {
             ColorBy::Extension => NodeId::NONE,
             ColorBy::TopFolder => self.zoom_root(),
         };
-        let key: PaletteKey = (self.tree_version(), color_by, root);
+        let dark = self.applied_dark();
+        let key: PaletteKey = (self.tree_version(), color_by, root, dark);
         if let Some((k, palette)) = self.derived().palette.borrow().as_ref() {
             if *k == key {
                 return Some(Rc::clone(palette));
             }
         }
+        let tones = map_tones(dark);
         let palette = self.with_result(|r, exts| {
-            Rc::new(match color_by {
+            let palette = match color_by {
                 ColorBy::Extension => {
                     Palette::from_extensions(exts, r.tree.size_mode(), r.tree.ext_count())
                 }
                 ColorBy::TopFolder => Palette::for_top_folders(r.tree, root),
-            })
+            };
+            Rc::new(palette.with_neutrals(tones.block, tones.background))
         })?;
         *self.derived().palette.borrow_mut() = Some((key, Rc::clone(&palette)));
         Some(palette)

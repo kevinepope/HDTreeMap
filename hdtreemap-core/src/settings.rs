@@ -1,5 +1,6 @@
-//! Remembered settings: the size mode, cushion shading, colour scheme, the two splitter
-//! positions and the recently scanned folders and drives, as one small JSON blob.
+//! Remembered settings: the size mode, cushion shading, colour scheme, the theme (light,
+//! dark or match the system; light when missing, as in blobs from before it existed), the
+//! two splitter positions and the recently scanned folders and drives, as one small JSON blob.
 //!
 //! Where the blob lives is the shell's business ([`SettingsStore`]): natively a file in the
 //! OS config directory (`hdtreemap-native`), on the web `localStorage`
@@ -18,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::SizeMode;
 use crate::render::{ColorBy, Shading};
 use crate::state::{SIDE_SPLIT_DEFAULT, TREE_SPLIT_DEFAULT};
+use crate::theme::Theme;
 
 /// How many recent scans are remembered (and listed on the start screen).
 pub const MAX_RECENT: usize = 5;
@@ -58,6 +60,8 @@ pub struct Settings {
     pub size_mode: SizeMode,
     pub shading: Shading,
     pub color_by: ColorBy,
+    /// Light, dark, or the OS appearance.
+    pub theme: Theme,
     /// Share of the window width for the left column (folder tree and legend).
     pub side_split: f64,
     /// Share of the left column's height for the folder tree.
@@ -72,6 +76,7 @@ impl Default for Settings {
             size_mode: SizeMode::default(),
             shading: Shading::default(),
             color_by: ColorBy::default(),
+            theme: Theme::default(),
             side_split: SIDE_SPLIT_DEFAULT,
             tree_split: TREE_SPLIT_DEFAULT,
             recent: Vec::new(),
@@ -86,6 +91,7 @@ struct Blob {
     size_mode: Option<String>,
     cushions: Option<bool>,
     color_by: Option<String>,
+    theme: Option<String>,
     side_split: Option<f64>,
     tree_split: Option<f64>,
     recent: Vec<serde_json::Value>,
@@ -126,6 +132,11 @@ impl Settings {
                 Some("type") => ColorBy::Extension,
                 _ => defaults.color_by,
             },
+            theme: blob
+                .theme
+                .as_deref()
+                .and_then(Theme::from_key)
+                .unwrap_or(defaults.theme),
             side_split: split(blob.side_split, defaults.side_split),
             tree_split: split(blob.tree_split, defaults.tree_split),
             recent,
@@ -150,6 +161,7 @@ impl Settings {
                 }
                 .to_string(),
             ),
+            theme: Some(self.theme.key().to_string()),
             // Rounded, so a splitter nudged by a rounding error does not rewrite the file.
             side_split: Some((self.side_split * 1000.0).round() / 1000.0),
             tree_split: Some((self.tree_split * 1000.0).round() / 1000.0),
@@ -189,6 +201,7 @@ mod tests {
             size_mode: SizeMode::Apparent,
             shading: Shading::Flat,
             color_by: ColorBy::TopFolder,
+            theme: Theme::Dark,
             side_split: 0.333_333,
             tree_split: 0.7,
             recent: Vec::new(),
@@ -203,6 +216,7 @@ mod tests {
         assert_eq!(back.size_mode, SizeMode::Apparent);
         assert_eq!(back.shading, Shading::Flat);
         assert_eq!(back.color_by, ColorBy::TopFolder);
+        assert_eq!(back.theme, Theme::Dark);
         assert!((back.side_split - 0.333).abs() < 1e-9);
         assert_eq!(back.tree_split, 0.7);
         assert_eq!(back.recent.len(), 2);
@@ -225,6 +239,33 @@ mod tests {
         assert_eq!(s.side_split, SIDE_SPLIT_DEFAULT);
         assert_eq!(s.tree_split, TREE_SPLIT_DEFAULT);
         assert_eq!(s.recent, vec![folder("/a")]);
+    }
+
+    #[test]
+    fn the_theme_is_light_unless_a_known_one_is_stored() {
+        assert_eq!(Settings::default().theme, Theme::Light);
+        // A settings.json from v0.1.0, before the theme was remembered.
+        let old = Settings::from_json(
+            r#"{"size_mode": "apparent", "cushions": true, "color_by": "type",
+                "side_split": 0.3, "tree_split": 0.6, "recent": []}"#,
+        );
+        assert_eq!(old.theme, Theme::Light);
+        assert_eq!(old.size_mode, SizeMode::Apparent);
+        for (stored, want) in [
+            (r#"{"theme": "dark"}"#, Theme::Dark),
+            (r#"{"theme": "system"}"#, Theme::System),
+            (r#"{"theme": "light"}"#, Theme::Light),
+            (r#"{"theme": "neon"}"#, Theme::Light),
+            (r#"{"theme": 3}"#, Theme::Light),
+            (r#"{"theme": null}"#, Theme::Light),
+        ] {
+            assert_eq!(Settings::from_json(stored).theme, want, "{stored}");
+        }
+        let mut s = Settings::default();
+        for theme in Theme::ALL {
+            s.theme = theme;
+            assert_eq!(Settings::from_json(&s.to_json()).theme, theme);
+        }
     }
 
     #[test]

@@ -1,4 +1,5 @@
-//! The remembered settings (`settings.rs`) on the state side: what the user chose is read
+//! The remembered settings (`settings.rs`) on the state side: what the user chose (the
+//! theme included) is read
 //! back into a [`Settings`] for saving, a loaded one is applied at start-up, and every scan
 //! started is put first in the recent list the start screen shows.
 //!
@@ -33,6 +34,7 @@ impl AppState {
             size_mode: self.size_mode(),
             shading: self.shading(),
             color_by: self.color_by(),
+            theme: self.theme(),
             side_split: self.side_split().get(),
             tree_split: self.tree_split().get(),
             recent: self.recent_scans(),
@@ -44,6 +46,7 @@ impl AppState {
         self.set_size_mode(settings.size_mode);
         self.set_shading(settings.shading);
         self.set_color_by(settings.color_by);
+        self.set_theme(settings.theme);
         self.side_split().set(settings.side_split);
         self.tree_split().set(settings.tree_split);
         *self.persistence().recent.borrow_mut() = settings.recent.clone();

@@ -139,6 +139,11 @@ impl AppState {
         self.map_changed();
     }
 
+    /// The look flipped between light and dark: the map's greys change with it.
+    pub(super) fn look_changed(&self) {
+        self.map_changed();
+    }
+
     fn map_changed(&self) {
         bump(&self.view().map_version);
         self.detail_changed();

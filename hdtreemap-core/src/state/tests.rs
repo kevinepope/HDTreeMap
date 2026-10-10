@@ -372,9 +372,9 @@ fn the_size_mode_is_kept_across_scans_and_applies_to_the_next_one() {
 
 /// A settings store in memory that counts its writes.
 #[derive(Clone, Default)]
-struct MemoryStore {
-    blob: Rc<std::cell::RefCell<Option<String>>>,
-    writes: Rc<std::cell::Cell<u32>>,
+pub(super) struct MemoryStore {
+    pub(super) blob: Rc<std::cell::RefCell<Option<String>>>,
+    pub(super) writes: Rc<std::cell::Cell<u32>>,
 }
 
 impl crate::settings::SettingsStore for MemoryStore {
@@ -396,6 +396,7 @@ fn settings_are_loaded_applied_and_saved_only_when_changed_and_idle() {
         size_mode: SizeMode::Apparent,
         shading: Shading::Flat,
         color_by: ColorBy::TopFolder,
+        theme: crate::theme::Theme::Dark,
         side_split: 0.4,
         tree_split: 0.5,
         recent: Vec::new(),
@@ -412,6 +413,7 @@ fn settings_are_loaded_applied_and_saved_only_when_changed_and_idle() {
     assert_eq!(state.size_mode(), SizeMode::Apparent);
     assert_eq!(state.shading(), Shading::Flat);
     assert_eq!(state.color_by(), ColorBy::TopFolder);
+    assert_eq!(state.theme(), crate::theme::Theme::Dark);
     assert_eq!(state.side_split().get(), 0.4);
     assert_eq!(state.tree_split().get(), 0.5);
     assert_eq!(state.recent_scans().len(), 1);

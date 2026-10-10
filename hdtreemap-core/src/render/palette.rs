@@ -84,8 +84,10 @@ pub struct Palette {
     assigned: Vec<(u16, Rgb)>,
     /// Files whose extension has no colour of its own ([`OTHER_FILES`]).
     other: Rgb,
-    /// Aggregates and folder blocks ([`FOLDER_BLOCK`]).
+    /// Aggregates and folder blocks ([`FOLDER_BLOCK`], or the theme's grey).
     block: Rgb,
+    /// Pixels no rectangle covers ([`BACKGROUND`](super::BACKGROUND), or the theme's).
+    background: [u8; 4],
     color_by: ColorBy,
     /// By top-level folder: the zoom root and the colour of each of its children.
     zoom_root: NodeId,
@@ -103,6 +105,7 @@ impl Default for Palette {
             assigned: Vec::new(),
             other: OTHER_FILES,
             block: FOLDER_BLOCK,
+            background: super::raster::BACKGROUND,
             color_by: ColorBy::Extension,
             zoom_root: NodeId::NONE,
             folders: HashMap::new(),
@@ -162,6 +165,24 @@ impl Palette {
             folder_order,
             ..Self::default()
         }
+    }
+
+    /// This palette with the neutral colours of a theme: the grey of folder blocks and
+    /// merged leftovers, and the raster's background (`theme::map_tones`). The hues stay.
+    pub fn with_neutrals(mut self, block: Rgb, background: [u8; 4]) -> Self {
+        self.block = block;
+        self.background = background;
+        self
+    }
+
+    /// The grey of folder blocks and merged leftovers.
+    pub fn block(&self) -> Rgb {
+        self.block
+    }
+
+    /// The colour of raster pixels no rectangle covers (an empty zoom root).
+    pub fn background(&self) -> [u8; 4] {
+        self.background
     }
 
     /// Which scheme this palette colours by.

@@ -18,6 +18,7 @@
 //! - [`scan`] — `ScanSource`, live progress, and the native `FsScanner`.
 //! - [`settings`] — the remembered settings and recent scans, as a JSON blob.
 //! - [`state`] — the shared app state (screen, running scan, finished result) and the scan pump.
+//! - [`theme`] — the light and dark looks (light by default) and the colours the app draws.
 //! - [`ui`] — the widget tree (start and scan screens, the treemap main view).
 
 pub mod demo_fs;
@@ -31,6 +32,7 @@ pub mod render;
 pub mod scan;
 pub mod settings;
 pub mod state;
+pub mod theme;
 pub mod ui;
 
 use std::rc::Rc;
@@ -48,6 +50,8 @@ pub const APP_TITLE: &str = "HDTreeMap";
 /// [`install_theme_and_fonts`] first.
 pub fn build_app(state: AppState, platform: Rc<dyn PlatformServices>, fonts: Fonts) -> App {
     state::install_scan_pump();
+    // The remembered theme (light by default), over whatever was installed before.
+    state.apply_theme();
     let root = ui::build_root(state, platform, fonts);
     if render::stats_enabled() {
         App::new(Box::new(ui::frame_stats::FrameStats::new(root)))

@@ -1,5 +1,6 @@
 //! Theme and fonts, installed once at startup by every shell (and by the headless tests) so
-//! native, web and tests render with the same setup.
+//! native, web and tests render with the same setup. The theme installed here is the
+//! default light one; `AppState` switches to the remembered look (`theme.rs`).
 //!
 //! The UI face is agg-gui's bundled Noto Sans with its standard fallback chain, which puts
 //! Font Awesome 4.7 behind it: an icon is just its code point drawn as ordinary text. The
@@ -9,7 +10,7 @@ use std::sync::Arc;
 
 use agg_gui::fonts::{standard_ui_font, FONT_AWESOME_4_7};
 use agg_gui::text::Font;
-use agg_gui::theme::{set_visuals, Visuals};
+use agg_gui::theme::set_visuals;
 use agg_gui::{font_settings, set_device_scale};
 
 /// Font Awesome 4.7 code points used by the app.
@@ -77,11 +78,11 @@ pub struct Fonts {
     pub icons: Arc<Font>,
 }
 
-/// Install the dark theme and the UI font for a display at `device_scale`, returning the
+/// Install the default (light) theme and the UI font for a display at `device_scale`, returning the
 /// fonts the widget tree is built with.
 pub fn install_theme_and_fonts(device_scale: f64) -> Result<Fonts, &'static str> {
     set_device_scale(device_scale);
-    set_visuals(Visuals::dark());
+    set_visuals(crate::theme::visuals(false));
     let ui = Arc::new(standard_ui_font());
     let icons = Arc::new(Font::from_slice(FONT_AWESOME_4_7)?);
     font_settings::set_system_font(Some(Arc::clone(&ui)));
