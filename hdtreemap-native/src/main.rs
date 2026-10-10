@@ -35,6 +35,9 @@ use hdtreemap_core::{build_app, install_theme_and_fonts, AppState, APP_TITLE};
 
 use cli::Command;
 
+/// Side of the window icon, in pixels.
+const WINDOW_ICON_SIZE: u32 = 256;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match cli::parse(&args) {
@@ -100,7 +103,13 @@ fn run_app(
         .with_min_logical_size(640.0, 480.0)
         // Nothing animates on its own; repaint only when input or state asks.
         .with_redraw_policy(RedrawPolicy::Reactive)
-        .with_device_label("hdtreemap-native");
+        .with_device_label("hdtreemap-native")
+        // The treemap icon, drawn by the core's renderer (taskbar / window list).
+        .with_icon_rgba(
+            hdtreemap_core::icon::rgba(WINDOW_ICON_SIZE, hdtreemap_core::icon::TIGHT_MARGIN),
+            WINDOW_ICON_SIZE,
+            WINDOW_ICON_SIZE,
+        );
     if let Ok(path) = std::env::var("HDTREEMAP_SCREENSHOT") {
         let frames = std::env::var("HDTREEMAP_SCREENSHOT_FRAMES")
             .ok()

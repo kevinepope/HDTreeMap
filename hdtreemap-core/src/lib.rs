@@ -10,6 +10,7 @@
 //! - [`demo_fs`] — the simulated drives' file trees and the `DemoScanner` that streams them.
 //! - [`fonts`] — theme + font installation and the Font Awesome code points.
 //! - [`format`] — human-readable sizes, counts, durations.
+//! - [`icon`] — the app icon, drawn by the treemap renderer.
 //! - [`layout`] — the squarified, cushioned treemap layout (pure geometry, hit testing).
 //! - [`model`] — the scanned tree (arena of nodes), size modes, extension table.
 //! - [`platform`] — the `PlatformServices` contract, volume-list cleanup, the demo platform.
@@ -22,6 +23,7 @@
 pub mod demo_fs;
 pub mod fonts;
 pub mod format;
+pub mod icon;
 pub mod layout;
 pub mod model;
 pub mod platform;

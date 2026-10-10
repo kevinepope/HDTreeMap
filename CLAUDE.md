@@ -31,6 +31,8 @@ app genuinely needs one (the treemap view).
 hdtreemap-core/     rlib: everything testable, no platform code
   src/fonts.rs        theme + fonts, Font Awesome code points (fa::*)
   src/format.rs       human-readable sizes
+  src/icon.rs         the app icon, drawn by the treemap layout + rasteriser (window icon,
+                      release assets)
   src/platform.rs     PlatformServices trait (volumes, picker, reveal/open/trash, open_url,
                       scan_source), VolumeInfo, volume-list cleanup (dedupe by VolumeKey)
   src/platform/demo.rs  DemoPlatform: the web demo's simulated drives
@@ -71,7 +73,8 @@ hdtreemap-core/     rlib: everything testable, no platform code
                       scanner tests, live_map, color_by, actions/menus tests,
                       file_line_count
   examples/           bench_treemap (layout/raster timing), bench_views (whole-frame
-                      timing), bench_live_scan (live vs blocking scan)
+                      timing), bench_live_scan (live vs blocking scan), make_icons
+                      (writes assets/icon/: PNGs, .ico, .icns; committed)
 hdtreemap-native/   bin `hdtreemap`: agg-gui-shell + NativePlatform (sysinfo, rfd, opener, trash),
                     CLI (`--demo [ID]`, `--dump-top N [PATH | --demo ID]`, `--highlight EXT`),
                     menu_bar.rs (macOS system menu from the core's spec), show.rs
