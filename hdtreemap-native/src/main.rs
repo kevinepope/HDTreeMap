@@ -33,40 +33,42 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let (platform, target): (Rc<dyn PlatformServices>, Option<ScanTarget>) = match command {
-        Command::Help => {
-            println!("{}", cli::USAGE);
-            return ExitCode::SUCCESS;
-        }
-        Command::DumpTop { top, source } => {
-            return match dump::run(top, &source) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(message) => {
-                    eprintln!("hdtreemap: {message}");
-                    ExitCode::FAILURE
-                }
-            };
-        }
-        Command::App { path } => (
-            Rc::new(platform::NativePlatform),
-            path.map(ScanTarget::folder),
-        ),
-        Command::Demo { id } => {
-            let demo = DemoPlatform::default();
-            let target = match id {
-                Some(id) => match demo.list_volumes().into_iter().find(|v| v.id == id) {
-                    Some(volume) => Some(ScanTarget::volume(&volume)),
-                    None => {
-                        eprintln!("hdtreemap: unknown demo drive {id:?}\n\n{}", cli::USAGE);
-                        return ExitCode::from(2);
+    let (platform, target, highlight): (Rc<dyn PlatformServices>, Option<ScanTarget>, _) =
+        match command {
+            Command::Help => {
+                println!("{}", cli::USAGE);
+                return ExitCode::SUCCESS;
+            }
+            Command::DumpTop { top, source } => {
+                return match dump::run(top, &source) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(message) => {
+                        eprintln!("hdtreemap: {message}");
+                        ExitCode::FAILURE
                     }
-                },
-                None => None,
-            };
-            (Rc::new(demo), target)
-        }
-    };
-    match run_app(platform, target) {
+                };
+            }
+            Command::App { path, highlight } => (
+                Rc::new(platform::NativePlatform),
+                path.map(ScanTarget::folder),
+                highlight,
+            ),
+            Command::Demo { id, highlight } => {
+                let demo = DemoPlatform::default();
+                let target = match id {
+                    Some(id) => match demo.list_volumes().into_iter().find(|v| v.id == id) {
+                        Some(volume) => Some(ScanTarget::volume(&volume)),
+                        None => {
+                            eprintln!("hdtreemap: unknown demo drive {id:?}\n\n{}", cli::USAGE);
+                            return ExitCode::from(2);
+                        }
+                    },
+                    None => None,
+                };
+                (Rc::new(demo), target, highlight)
+            }
+        };
+    match run_app(platform, target, highlight) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("hdtreemap: {err}");
@@ -75,10 +77,12 @@ fn main() -> ExitCode {
     }
 }
 
-/// Open the window over `platform`, scanning `target` at once when given.
+/// Open the window over `platform`, scanning `target` at once when given (and highlighting
+/// extension `highlight` when it finishes).
 fn run_app(
     platform: Rc<dyn PlatformServices>,
     target: Option<ScanTarget>,
+    highlight: Option<String>,
 ) -> Result<(), ShellError> {
     let mut config = ShellConfig::new(APP_TITLE)
         .with_logical_size(1200.0, 800.0)
@@ -97,6 +101,7 @@ fn run_app(
     agg_gui_shell::run(config, move |init| {
         let fonts = install_theme_and_fonts(init.device_scale()).map_err(ShellError::app)?;
         let state = AppState::new();
+        state.highlight_on_finish(highlight);
         if let Some(target) = target {
             let source = platform.scan_source(&target);
             state.start_scan(target, source);

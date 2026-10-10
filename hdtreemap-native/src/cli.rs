@@ -7,6 +7,9 @@
 //! hdtreemap --dump-top N --demo ID    the same for a simulated drive
 //! hdtreemap --help
 //! ```
+//!
+//! `--highlight EXT` (with the windowed app) highlights extension EXT on the map once the
+//! scan finishes, as a legend click would; handy for screenshots.
 
 use std::path::PathBuf;
 
@@ -19,6 +22,8 @@ Usage:
                                      N largest folders and files, totals and timing
   hdtreemap --dump-top N --demo ID   The same for a simulated drive
   hdtreemap --help                   Show this help
+
+  --highlight EXT                    With a scan: highlight EXT's files on the map
 
 Simulated drive ids: laptop-ssd, dev-workstation, media-library, usb-stick,
 messy-downloads, archive-server";
@@ -36,10 +41,12 @@ pub enum Command {
     /// The windowed app on the real machine, optionally scanning `path` at once.
     App {
         path: Option<PathBuf>,
+        highlight: Option<String>,
     },
     /// The windowed app on the simulated demo machine, optionally scanning drive `id`.
     Demo {
         id: Option<String>,
+        highlight: Option<String>,
     },
     /// Scan without a window and print the `top` largest entries.
     DumpTop {
@@ -54,6 +61,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     let mut path: Option<PathBuf> = None;
     let mut demo: Option<Option<String>> = None;
     let mut top: Option<usize> = None;
+    let mut highlight: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -78,6 +86,15 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 top = Some(n);
                 i += 1;
             }
+            "--highlight" => {
+                let ext = args.get(i + 1).ok_or("--highlight needs an extension")?;
+                let ext = ext.trim_start_matches('.').to_lowercase();
+                if ext.is_empty() {
+                    return Err("--highlight needs an extension".to_string());
+                }
+                highlight = Some(ext);
+                i += 1;
+            }
             _ if arg.starts_with("--") => return Err(format!("unknown option {arg}")),
             _ => {
                 if path.is_some() {
@@ -91,6 +108,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     if demo.is_some() && path.is_some() {
         return Err("--demo and a PATH cannot be combined".to_string());
     }
+    if top.is_some() && highlight.is_some() {
+        return Err("--highlight is for the windowed app, not --dump-top".to_string());
+    }
     match (top, demo) {
         (Some(top), Some(Some(id))) => Ok(Command::DumpTop {
             top,
@@ -101,8 +121,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             top,
             source: DumpSource::Path(path.unwrap_or_else(|| PathBuf::from("."))),
         }),
-        (None, Some(id)) => Ok(Command::Demo { id }),
-        (None, None) => Ok(Command::App { path }),
+        (None, Some(id)) => Ok(Command::Demo { id, highlight }),
+        (None, None) => Ok(Command::App { path, highlight }),
     }
 }
 
@@ -117,11 +137,18 @@ mod tests {
 
     #[test]
     fn plain_runs_and_paths() {
-        assert_eq!(p(&[]), Ok(Command::App { path: None }));
+        assert_eq!(
+            p(&[]),
+            Ok(Command::App {
+                path: None,
+                highlight: None
+            })
+        );
         assert_eq!(
             p(&["/data"]),
             Ok(Command::App {
-                path: Some(PathBuf::from("/data"))
+                path: Some(PathBuf::from("/data")),
+                highlight: None
             })
         );
         assert_eq!(p(&["--help"]), Ok(Command::Help));
@@ -131,11 +158,18 @@ mod tests {
 
     #[test]
     fn demo_with_and_without_a_drive() {
-        assert_eq!(p(&["--demo"]), Ok(Command::Demo { id: None }));
+        assert_eq!(
+            p(&["--demo"]),
+            Ok(Command::Demo {
+                id: None,
+                highlight: None
+            })
+        );
         assert_eq!(
             p(&["--demo", "usb-stick"]),
             Ok(Command::Demo {
-                id: Some("usb-stick".into())
+                id: Some("usb-stick".into()),
+                highlight: None
             })
         );
         assert!(p(&["--demo", "x", "/path"]).is_err());
@@ -167,5 +201,26 @@ mod tests {
         assert!(p(&["--dump-top"]).is_err());
         assert!(p(&["--dump-top", "ten"]).is_err());
         assert!(p(&["--dump-top", "3", "--demo"]).is_err());
+    }
+
+    #[test]
+    fn highlight_names_an_extension_for_the_app() {
+        assert_eq!(
+            p(&["--demo", "dev-workstation", "--highlight", ".JS"]),
+            Ok(Command::Demo {
+                id: Some("dev-workstation".into()),
+                highlight: Some("js".into())
+            })
+        );
+        assert_eq!(
+            p(&["/data", "--highlight", "mov"]),
+            Ok(Command::App {
+                path: Some(PathBuf::from("/data")),
+                highlight: Some("mov".into())
+            })
+        );
+        assert!(p(&["--highlight"]).is_err());
+        assert!(p(&["--highlight", "."]).is_err());
+        assert!(p(&["--dump-top", "3", "--highlight", "js"]).is_err());
     }
 }
