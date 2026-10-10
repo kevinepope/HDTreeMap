@@ -136,6 +136,14 @@ impl PlatformServices for DemoPlatform {
         Ok(ActionOutcome::Simulated(SIMULATED_MESSAGE.to_string()))
     }
 
+    /// The demo platform itself opens no browser; the web shell wraps it to open links
+    /// in a new tab.
+    fn open_url(&self, url: &str) -> ActionResult {
+        Ok(ActionOutcome::Simulated(format!(
+            "Open {url} in your browser."
+        )))
+    }
+
     fn is_demo(&self) -> bool {
         true
     }

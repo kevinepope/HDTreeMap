@@ -45,6 +45,8 @@ fn start_scan_treemap_rescan_and_back() {
         .expect("usb stick listed");
     let mut h = Harness::new(Rc::new(platform));
     assert!(h.visible(START_SCREEN_ID));
+    // Tall enough that the USB stick's card is on screen below the menu bar.
+    h.resize(1200.0, 1000.0);
 
     h.click(&volume_card_id(usb_index));
     assert!(matches!(h.state.screen(), Screen::Scanning(_)));
@@ -101,6 +103,8 @@ fn start_scan_treemap_rescan_and_back() {
 #[test]
 fn the_main_view_survives_small_windows() {
     let mut h = Harness::new(Rc::new(DemoPlatform::unpaced()));
+    // Tall enough that the fourth card is on screen below the menu bar.
+    h.resize(1200.0, 1000.0);
     h.click(&volume_card_id(3));
     wait_for_results(&mut h);
     for (w, ht) in [(640.0, 480.0), (320.0, 240.0), (40.0, 30.0), (1.0, 1.0)] {

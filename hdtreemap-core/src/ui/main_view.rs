@@ -25,6 +25,7 @@ use agg_gui::{
 };
 
 use super::breadcrumb;
+use super::commands::Commands;
 use super::describe;
 use super::ext_legend::{ExtLegend, EXT_LEGEND_ID, NO_EXTENSION};
 use super::folder_tree::{FolderTree, FOLDER_TREE_ID};
@@ -57,6 +58,8 @@ pub const STATUS_ERRORS_ID: &str = "status-errors";
 pub const STATUS_FREE_ID: &str = "status-free";
 /// Widget id of the status bar's highlighted-extension note.
 pub const STATUS_HIGHLIGHT_ID: &str = "status-highlight";
+/// Widget id of the status bar's folder-rescan progress.
+pub const STATUS_RESCAN_ID: &str = "status-rescan";
 /// Widget id of the splitter between the left column and the map.
 pub const SIDE_SPLITTER_ID: &str = "side-splitter";
 /// Widget id of the splitter between the folder tree and the legend.
@@ -68,13 +71,10 @@ pub const STATUS_IDLE_TEXT: &str = "Point at the map to see what uses the space.
 /// Status-bar text size.
 const STATUS_FONT: f64 = 13.0;
 
-/// Build the main view for `target` from the finished scan in `state`.
-pub fn build(
-    state: &AppState,
-    platform: &Rc<dyn PlatformServices>,
-    target: &ScanTarget,
-    fonts: &Fonts,
-) -> Box<dyn Widget> {
+/// Build the main view for `target` from the finished scan in the commands' state.
+pub fn build(commands: &Commands, target: &ScanTarget, fonts: &Fonts) -> Box<dyn Widget> {
+    let state = commands.state();
+    let platform = commands.platform();
     Box::new(
         FlexColumn::new()
             .with_panel_bg()
@@ -131,6 +131,41 @@ fn toolbar(
     .with_h_anchor(HAnchor::STRETCH)
     .with_v_anchor(VAnchor::CENTER);
 
+    // Rebuilt when the map changes, so a size mode or shading picked from the View menu
+    // shows here too.
+    let view_state = state.clone();
+    let view_version = state.clone();
+    let view_fonts = fonts.clone();
+    let view_controls = Rebuilder::new(
+        move || view_version.map_version(),
+        move || view_toggles(&view_state, &view_fonts),
+    )
+    .with_v_anchor(VAnchor::CENTER);
+
+    let rescan_state = state.clone();
+    let rescan_platform = Rc::clone(platform);
+    let rescan_target = target.clone();
+    let rescan = Button::new("Rescan", Arc::clone(&fonts.ui))
+        .with_icon(fa::REFRESH, Arc::clone(&fonts.icons))
+        .with_focus_on_click(false)
+        .on_click(move || start_scan(&rescan_state, &rescan_platform, rescan_target.clone()))
+        .with_v_anchor(VAnchor::CENTER)
+        .with_name(RESCAN_ID);
+
+    Box::new(
+        FlexRow::new()
+            .with_gap(10.0)
+            .with_inner_padding(Insets::symmetric(10.0, 8.0))
+            .with_h_anchor(HAnchor::STRETCH)
+            .add(Box::new(back))
+            .add_flex(Box::new(crumbs), 1.0)
+            .add(Box::new(view_controls))
+            .add(Box::new(rescan)),
+    )
+}
+
+/// The size-mode switch and the cushion checkbox, showing the state as it is now.
+fn view_toggles(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
     let modes = [SizeMode::Allocated, SizeMode::Apparent];
     let selected = Rc::new(Cell::new(usize::from(
         state.size_mode() == SizeMode::Apparent,
@@ -157,27 +192,12 @@ fn toolbar(
     })
     .with_v_anchor(VAnchor::CENTER)
     .with_name(SHADING_ID);
-
-    let rescan_state = state.clone();
-    let rescan_platform = Rc::clone(platform);
-    let rescan_target = target.clone();
-    let rescan = Button::new("Rescan", Arc::clone(&fonts.ui))
-        .with_icon(fa::REFRESH, Arc::clone(&fonts.icons))
-        .with_focus_on_click(false)
-        .on_click(move || start_scan(&rescan_state, &rescan_platform, rescan_target.clone()))
-        .with_v_anchor(VAnchor::CENTER)
-        .with_name(RESCAN_ID);
-
     Box::new(
         FlexRow::new()
             .with_gap(10.0)
-            .with_inner_padding(Insets::symmetric(10.0, 8.0))
-            .with_h_anchor(HAnchor::STRETCH)
-            .add(Box::new(back))
-            .add_flex(Box::new(crumbs), 1.0)
+            .with_fit_width(true)
             .add(Box::new(size_mode))
-            .add(Box::new(shading))
-            .add(Box::new(rescan)),
+            .add(Box::new(shading)),
     )
 }
 
@@ -215,9 +235,19 @@ fn status_bar(
     )
     .with_v_anchor(VAnchor::CENTER);
 
+    let rescan_state = state.clone();
+    let rescan_version = state.clone();
+    let rescan_fonts = fonts.clone();
+    let rescan = Rebuilder::new(
+        move || rescan_version.progress_version(),
+        move || rescan_note(&rescan_state, &rescan_fonts),
+    )
+    .with_v_anchor(VAnchor::CENTER);
+
     let mut row = FlexRow::new()
         .with_gap(18.0)
         .with_h_anchor(HAnchor::STRETCH)
+        .add(Box::new(rescan))
         .add_flex(Box::new(item), 1.0)
         .add(Box::new(highlight))
         .add(Box::new(totals));
@@ -261,8 +291,46 @@ fn free_note(state: &AppState, target: &ScanTarget, fonts: &Fonts) -> Box<dyn Wi
             fonts,
             STATUS_FREE_ID,
         ),
-        None => Box::new(agg_gui::Spacer::new().with_max_size(agg_gui::Size::new(0.0, 0.0))),
+        None => empty_note(fonts),
     }
+}
+
+/// `"⟳ Rescanning Photos… 1,234 files · 3.4 GB"` while a folder rescan runs; nothing
+/// otherwise.
+pub fn rescan_text(state: &AppState) -> Option<String> {
+    let status = state.rescan_status()?;
+    let name = status.path.file_name().map_or_else(
+        || status.path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    Some(format!(
+        "{}  Rescanning {name}\u{2026} {} \u{b7} {}",
+        fa::REFRESH,
+        describe::files_phrase(status.progress.files),
+        format_bytes(status.progress.bytes)
+    ))
+}
+
+fn rescan_note(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
+    match rescan_text(state) {
+        Some(text) => Box::new(
+            Label::new(text, Arc::clone(&fonts.ui))
+                .with_font_size(STATUS_FONT)
+                .with_color(current_visuals().accent)
+                .with_v_anchor(VAnchor::CENTER)
+                .with_name(STATUS_RESCAN_ID),
+        ),
+        None => empty_note(fonts),
+    }
+}
+
+/// An empty status-bar slot (an empty label takes no room in the row).
+fn empty_note(fonts: &Fonts) -> Box<dyn Widget> {
+    Box::new(
+        Label::new(String::new(), Arc::clone(&fonts.ui))
+            .with_font_size(STATUS_FONT)
+            .with_v_anchor(VAnchor::CENTER),
+    )
 }
 
 /// The hovered item, else the selected one, else a hint.

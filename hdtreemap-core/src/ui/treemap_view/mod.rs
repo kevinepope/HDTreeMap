@@ -22,7 +22,9 @@
 //! Input: hover updates `AppState::hovered` (the status bar shows it) and the multi-line
 //! tooltip, keyed on the hovered rectangle (`tooltip_key`) so each rectangle gets its own
 //! hover delay;
-//! a click selects; a double click zooms into the folder (or a file's folder); Backspace or
+//! a click selects; a right click selects and opens the item's context menu (through
+//! `AppState::request_context_menu`, at the click in root coordinates); a double click
+//! zooms into the folder (or a file's folder); Backspace or
 //! the mouse back button zooms out; Escape clears the extension highlight, else the
 //! selection.
 
@@ -103,6 +105,9 @@ pub struct TreemapView {
     linked_hover_index: Located,
     /// The highlighted extension's files in the current layout.
     highlight: Highlight,
+    /// This widget's (0, 0) in root coordinates (logical, Y up), from the last paint: where
+    /// a right click's context menu opens.
+    origin: Point,
 }
 
 impl TreemapView {
@@ -121,6 +126,7 @@ impl TreemapView {
             selected_index: None,
             linked_hover_index: None,
             highlight: Highlight::default(),
+            origin: Point::ORIGIN,
         }
     }
 
@@ -337,6 +343,24 @@ impl TreemapView {
         agg_gui::animation::request_draw();
     }
 
+    /// A right click at `pos`: select what is under it and ask for its context menu.
+    fn context_menu_at(&mut self, pos: Point) {
+        self.hover_at(pos);
+        if !self.layout_is_current() {
+            return;
+        }
+        let Some(node) = self
+            .hover_index
+            .and_then(|i| self.hover_for(i))
+            .map(|h| h.node)
+        else {
+            return;
+        };
+        self.state.set_selected(Some(node));
+        let at = Point::new(self.origin.x + pos.x, self.origin.y + pos.y);
+        self.state.request_context_menu(at, node);
+    }
+
     /// The rectangle showing `node` (or its nearest laid-out folder), looked up once per
     /// change through `slot`.
     fn locate(&self, slot: &mut Located, node: NodeId) -> Option<usize> {
@@ -464,6 +488,9 @@ impl Widget for TreemapView {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let (mut ox, mut oy) = (0.0, 0.0);
+        agg_gui::widget::logical_root_transform(ctx).transform(&mut ox, &mut oy);
+        self.origin = Point::new(ox, oy);
         let scale = effective_scale();
         self.refresh(scale);
         let Some(pixels) = self.shown_pixels() else {
@@ -536,6 +563,18 @@ impl Widget for TreemapView {
             }
             Event::MouseUp {
                 button: MouseButton::Left,
+                ..
+            } => EventResult::Consumed,
+            Event::MouseDown {
+                pos,
+                button: MouseButton::Right,
+                ..
+            } => {
+                self.context_menu_at(*pos);
+                EventResult::Consumed
+            }
+            Event::MouseUp {
+                button: MouseButton::Right,
                 ..
             } => EventResult::Consumed,
             Event::MouseDown {

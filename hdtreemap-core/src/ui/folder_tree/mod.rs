@@ -21,8 +21,9 @@
 //! selection are closed again, and their rows dropped (`remove_children`), when the next
 //! one is shown elsewhere. Folders the user opened are left alone.
 //!
-//! [`FolderTree::node_at`] finds the row under a point from the `TreeView`'s own row
-//! geometry, so it is right however far the tree is scrolled.
+//! A right click on a row selects it and opens the item's context menu
+//! ([`FolderTree::node_at`] finds the row from the `TreeView`'s own row geometry, so it is
+//! right however far the tree is scrolled).
 
 pub mod rows;
 
@@ -31,8 +32,8 @@ use std::sync::Arc;
 
 use agg_gui::widgets::tree_view::TreeNode;
 use agg_gui::{
-    DrawCtx, Event, EventResult, HAnchor, Point, Rect, ScrollAlign, Size, TreeView, TreeViewEvent,
-    VAnchor, Widget, WidgetBase,
+    DrawCtx, Event, EventResult, HAnchor, MouseButton, Point, Rect, ScrollAlign, Size, TreeView,
+    TreeViewEvent, VAnchor, Widget, WidgetBase,
 };
 
 use crate::fonts::Fonts;
@@ -80,6 +81,8 @@ pub struct FolderTree {
     /// Folders the tree opened itself to show a zoom root or selection (closed again when
     /// the next one is shown elsewhere).
     auto_expanded: HashSet<NodeId>,
+    /// This widget's (0, 0) in root coordinates (logical, Y up), from the last paint.
+    origin: Point,
 }
 
 impl FolderTree {
@@ -106,6 +109,7 @@ impl FolderTree {
             row_hovered: None,
             hover_pushed: None,
             auto_expanded: HashSet::new(),
+            origin: Point::ORIGIN,
         }
     }
 
@@ -123,6 +127,11 @@ impl FolderTree {
     /// How many rows (`TreeView` nodes) exist: the lazy tree's size.
     pub fn node_count(&self) -> usize {
         self.view().map_or(0, |v| v.nodes.len())
+    }
+
+    /// How far the `TreeView` is scrolled down (logical pixels).
+    pub fn scroll_offset(&self) -> f64 {
+        self.view().map_or(0.0, TreeView::scroll_offset)
     }
 
     /// The scanned node of the selected row.
@@ -526,7 +535,11 @@ impl Widget for FolderTree {
         size
     }
 
-    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let (mut x, mut y) = (0.0, 0.0);
+        agg_gui::widget::logical_root_transform(ctx).transform(&mut x, &mut y);
+        self.origin = Point::new(x, y);
+    }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
         match event {
@@ -537,6 +550,20 @@ impl Widget for FolderTree {
                 self.row_hovered = None;
                 self.push_hover(None);
                 EventResult::Ignored
+            }
+            Event::MouseDown {
+                pos,
+                button: MouseButton::Right,
+                ..
+            } => {
+                // The TreeView ignores right clicks; they reach the wrapper.
+                let Some(node) = self.node_at(*pos) else {
+                    return EventResult::Ignored;
+                };
+                self.state.set_selected(Some(node));
+                let at = Point::new(self.origin.x + pos.x, self.origin.y + pos.y);
+                self.state.request_context_menu(at, node);
+                EventResult::Consumed
             }
             _ => EventResult::Ignored,
         }

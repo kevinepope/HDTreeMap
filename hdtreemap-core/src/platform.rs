@@ -94,6 +94,8 @@ pub trait PlatformServices {
     fn open(&self, path: &Path) -> ActionResult;
     /// Move `path` to the system trash (never a permanent delete).
     fn trash(&self, path: &Path) -> ActionResult;
+    /// Open `url` (a web page: Help ▸ View on GitHub) in the user's browser.
+    fn open_url(&self, url: &str) -> ActionResult;
     /// True for the browser demo's simulated machine.
     fn is_demo(&self) -> bool;
     /// Start scanning `target`, returning the running source the UI polls each frame.

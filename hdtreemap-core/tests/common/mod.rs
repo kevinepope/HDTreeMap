@@ -18,6 +18,8 @@ use hdtreemap_core::platform::{
 };
 use hdtreemap_core::scan::ScanSource;
 use hdtreemap_core::state::ScanTarget;
+use hdtreemap_core::ui::context_menu::{ContextMenuHost, CONTEXT_MENU_ID};
+use hdtreemap_core::ui::toast::{Toasts, TOAST_ID};
 use hdtreemap_core::{build_app, install_theme_and_fonts, AppState};
 
 pub const WIDTH: f64 = 1200.0;
@@ -66,6 +68,10 @@ impl PlatformServices for FakePlatform {
             Some(message) => Err(PlatformError::new(message.clone())),
             None => Ok(ActionOutcome::Done),
         }
+    }
+    fn open_url(&self, url: &str) -> ActionResult {
+        self.record(format!("open_url {url}"));
+        Ok(ActionOutcome::Done)
     }
     fn is_demo(&self) -> bool {
         false
@@ -228,6 +234,49 @@ impl Harness {
             .unwrap_or_else(|| panic!("no label {id:?}"))
     }
 
+    /// A right click at `(x, y)` (Y-down), then a frame.
+    pub fn right_click_at(&mut self, x: f64, y: f64) {
+        self.app.on_mouse_move(x, y);
+        self.app
+            .on_mouse_down(x, y, MouseButton::Right, Modifiers::default());
+        self.app
+            .on_mouse_up(x, y, MouseButton::Right, Modifiers::default());
+        self.frame();
+    }
+
+    /// Click the centre of `rect`, given in root coordinates (Y up).
+    pub fn click_root_rect(&mut self, rect: Rect) {
+        let x = rect.x + rect.width / 2.0;
+        let y = self.size.height - (rect.y + rect.height / 2.0);
+        self.click_at(x, y);
+    }
+
+    /// The context menu host.
+    pub fn context_menu(&self) -> &ContextMenuHost {
+        self.widget::<ContextMenuHost>(CONTEXT_MENU_ID)
+    }
+
+    /// Click the open context menu's row labelled `label`.
+    pub fn choose(&mut self, label: &str) {
+        let rect = self
+            .context_menu()
+            .item_rect(label)
+            .unwrap_or_else(|| panic!("no menu row {label:?}: {:?}", self.context_menu().items()));
+        self.click_root_rect(rect);
+    }
+
+    /// Press `key` with `modifiers`, then run a frame.
+    pub fn key_with(&mut self, key: Key, modifiers: Modifiers) {
+        self.app.on_key_down(key.clone(), modifiers);
+        self.app.on_key_up(key, modifiers);
+        self.frame();
+    }
+
+    /// The toasts shown by the last paint.
+    pub fn toasts(&self) -> Vec<String> {
+        self.widget::<Toasts>(TOAST_ID).shown().to_vec()
+    }
+
     pub fn click_at(&mut self, x: f64, y: f64) {
         self.app.on_mouse_move(x, y);
         self.app
@@ -252,6 +301,35 @@ pub fn scanning_state(path: &str) -> AppState {
     let target = ScanTarget::folder(path);
     state.start_scan(target.clone(), platform.scan_source(&target));
     state
+}
+
+/// A harness on the main view of a finished USB-stick demo scan, over a recording fake
+/// platform (its scans also stream the USB stick, unpaced). Returns the call log.
+pub fn fake_map() -> (Harness, Rc<RefCell<Vec<String>>>) {
+    let (mut platform, _) = fake(Vec::new(), None);
+    platform.pace = DemoPace::Unpaced;
+    fake_map_with(platform)
+}
+
+/// [`fake_map`] over `platform`.
+pub fn fake_map_with(platform: FakePlatform) -> (Harness, Rc<RefCell<Vec<String>>>) {
+    use hdtreemap_core::platform::DemoPlatform;
+    use hdtreemap_core::state::Screen;
+    let calls = Rc::clone(&platform.calls);
+    let state = AppState::new();
+    let volume = DemoPlatform::unpaced()
+        .list_volumes()
+        .into_iter()
+        .find(|v| v.id == "usb-stick")
+        .expect("usb stick");
+    let target = ScanTarget::volume(&volume);
+    state.start_scan(target, platform.scan_source(&ScanTarget::folder("/x")));
+    while state.pump(std::time::Duration::from_secs(5)) {}
+    calls.borrow_mut().clear();
+    let mut h = Harness::with_state(state, Rc::new(platform));
+    h.frame();
+    assert!(matches!(h.state.screen(), Screen::Results(_)));
+    (h, calls)
 }
 
 /// A harness on the main view of a finished, unpaced scan of demo drive `id`.

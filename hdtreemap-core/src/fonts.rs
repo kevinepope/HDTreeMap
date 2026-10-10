@@ -44,6 +44,28 @@ pub mod fa {
     pub const CARET_DOWN: char = '\u{f0d7}';
     /// fa-caret-up — a legend column sorted smallest (or A) first.
     pub const CARET_UP: char = '\u{f0d8}';
+    /// fa-external-link — Open.
+    pub const EXTERNAL_LINK: char = '\u{f08e}';
+    /// fa-clipboard — Copy Path.
+    pub const CLIPBOARD: char = '\u{f0ea}';
+    /// fa-search-plus — Zoom Here / Zoom In.
+    pub const SEARCH_PLUS: char = '\u{f00e}';
+    /// fa-search-minus — Zoom Out.
+    pub const SEARCH_MINUS: char = '\u{f010}';
+    /// fa-level-up — Zoom to Parent.
+    pub const LEVEL_UP: char = '\u{f148}';
+    /// fa-home — Zoom to Root.
+    pub const HOME: char = '\u{f015}';
+    /// fa-trash — Move to Trash.
+    pub const TRASH: char = '\u{f1f8}';
+    /// fa-power-off — Quit.
+    pub const POWER_OFF: char = '\u{f011}';
+    /// fa-github — View on GitHub.
+    pub const GITHUB: char = '\u{f09b}';
+    /// fa-check-circle — a toast reporting success.
+    pub const CHECK_CIRCLE: char = '\u{f058}';
+    /// fa-eraser — Clear Highlight.
+    pub const ERASER: char = '\u{f12d}';
 }
 
 /// The faces the widgets draw with.
@@ -92,6 +114,17 @@ mod tests {
             fa::ELLIPSIS_H,
             fa::CARET_DOWN,
             fa::CARET_UP,
+            fa::EXTERNAL_LINK,
+            fa::CLIPBOARD,
+            fa::SEARCH_PLUS,
+            fa::SEARCH_MINUS,
+            fa::LEVEL_UP,
+            fa::HOME,
+            fa::TRASH,
+            fa::POWER_OFF,
+            fa::GITHUB,
+            fa::CHECK_CIRCLE,
+            fa::ERASER,
         ] {
             assert!(
                 fonts.icons.has_glyph(icon),

@@ -7,6 +7,7 @@
 //! | Reveal | `open -R` | `explorer /select,` | FileManager1 `ShowItems` over `dbus-send`, else `xdg-open` on the parent |
 //! | Open | opener | opener | opener |
 //! | Trash | trash | trash | trash |
+//! | Open URL | opener (browser) | opener | opener |
 //! | Scan | `FsScanner` (jwalk, worker thread) | same | same |
 //!
 //! The volume list is cleaned up by the pure, unit-tested helpers in
@@ -93,6 +94,12 @@ impl PlatformServices for NativePlatform {
                     path.display()
                 ))
             })
+    }
+
+    fn open_url(&self, url: &str) -> ActionResult {
+        opener::open_browser(url)
+            .map(|()| ActionOutcome::Done)
+            .map_err(|err| PlatformError::new(format!("Could not open {url}: {err}")))
     }
 
     fn is_demo(&self) -> bool {

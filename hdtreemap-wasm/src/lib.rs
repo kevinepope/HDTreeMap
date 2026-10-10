@@ -3,8 +3,9 @@
 //! Thinnest possible browser shim: the canvas, the WebGPU / WebGL2 surface, the
 //! requestAnimationFrame loop, DOM input and DPR tracking all belong to
 //! `agg-gui-web-shell`. This crate installs the theme and fonts and boots the shared app
-//! from `hdtreemap-core` with the simulated [`DemoPlatform`]: the browser cannot read the
-//! visitor's disks, so the demo shows a set of descriptive simulated drives.
+//! from `hdtreemap-core` with the simulated [`DemoPlatform`] (wrapped so web links open in
+//! a new tab): the browser cannot read the visitor's disks, so the demo shows a set of
+//! descriptive simulated drives.
 //!
 //! On native targets the crate is empty (it is a workspace member only so fmt and clippy
 //! cover it).
@@ -14,12 +15,65 @@
 use std::rc::Rc;
 
 use agg_gui_web_shell::{start, NoHost, RedrawPolicy, WebShellConfig, WebShellError};
-use hdtreemap_core::platform::DemoPlatform;
+use std::path::{Path, PathBuf};
+
+use hdtreemap_core::platform::{
+    ActionOutcome, ActionResult, DemoPlatform, PlatformError, PlatformServices, VolumeInfo,
+};
+use hdtreemap_core::scan::ScanSource;
+use hdtreemap_core::state::ScanTarget;
 use hdtreemap_core::{build_app, install_theme_and_fonts, AppState, APP_TITLE};
 use wasm_bindgen::prelude::*;
 
 /// `id` of the canvas in `demo/index.html`.
 const CANVAS_ID: &str = "hdtreemap-canvas";
+
+#[wasm_bindgen(inline_js = "export function hdtreemap_open_url(url) { \
+    return window.open(url, '_blank', 'noopener') !== null; }")]
+extern "C" {
+    /// Open `url` in a new browser tab; false when the browser blocked it.
+    fn hdtreemap_open_url(url: &str) -> bool;
+}
+
+/// The browser's platform: the simulated [`DemoPlatform`], except that web links really
+/// open (in a new tab).
+#[derive(Default)]
+struct WebPlatform {
+    demo: DemoPlatform,
+}
+
+impl PlatformServices for WebPlatform {
+    fn list_volumes(&self) -> Vec<VolumeInfo> {
+        self.demo.list_volumes()
+    }
+    fn pick_folder(&self) -> Option<PathBuf> {
+        self.demo.pick_folder()
+    }
+    fn reveal(&self, path: &Path) -> ActionResult {
+        self.demo.reveal(path)
+    }
+    fn open(&self, path: &Path) -> ActionResult {
+        self.demo.open(path)
+    }
+    fn trash(&self, path: &Path) -> ActionResult {
+        self.demo.trash(path)
+    }
+    fn open_url(&self, url: &str) -> ActionResult {
+        if hdtreemap_open_url(url) {
+            Ok(ActionOutcome::Done)
+        } else {
+            Err(PlatformError::new(format!(
+                "The browser blocked a new tab. Open {url} yourself."
+            )))
+        }
+    }
+    fn is_demo(&self) -> bool {
+        true
+    }
+    fn scan_source(&self, target: &ScanTarget) -> Box<dyn ScanSource> {
+        self.demo.scan_source(target)
+    }
+}
 
 #[wasm_bindgen(start)]
 pub fn main() -> Result<(), JsValue> {
@@ -31,7 +85,7 @@ pub fn main() -> Result<(), JsValue> {
     // also fails the wasm start so the page's boot code sees it.
     start(config, |init| {
         let fonts = install_theme_and_fonts(init.device_scale()).map_err(WebShellError::app)?;
-        let app = build_app(AppState::new(), Rc::new(DemoPlatform::default()), fonts);
+        let app = build_app(AppState::new(), Rc::new(WebPlatform::default()), fonts);
         Ok((app, NoHost))
     })
     .map_err(|err| JsValue::from_str(&err.to_string()))
