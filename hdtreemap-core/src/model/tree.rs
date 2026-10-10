@@ -188,6 +188,24 @@ impl Tree {
         }
     }
 
+    /// The node's live children by the active size, largest first (ties by name): the
+    /// finished tree's order, also for a tree still being built, whose children are not
+    /// sorted yet (the live map's folder tree).
+    pub fn children_by_size(&self, id: NodeId) -> Vec<NodeId> {
+        let mut kids: Vec<NodeId> = self.children(id).filter(|&c| self.is_live(c)).collect();
+        let mode = self.mode;
+        kids.sort_by(|&a, &b| {
+            self.size_of(b, mode)
+                .cmp(&self.size_of(a, mode))
+                .then_with(|| self.name(a).cmp(self.name(b)))
+        });
+        kids
+    }
+
+    fn size_of(&self, id: NodeId, mode: SizeMode) -> u64 {
+        self.node(id).map_or(0, |n| n.size(mode))
+    }
+
     /// Number of steps from the root (0 for the root).
     pub fn depth(&self, id: NodeId) -> usize {
         self.ancestors(id).count()

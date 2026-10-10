@@ -27,11 +27,14 @@ pub fn run(top: usize, source: &DumpSource) -> Result<(), String> {
     };
     let progress = scan.progress();
     let live = std::io::stderr().is_terminal();
+    let mut last_print = std::time::Instant::now();
     let result = loop {
-        match scan.poll(Duration::from_millis(100)) {
+        // The filesystem scanner's tree is assembled here, from the worker's batches.
+        match scan.poll(Duration::from_millis(50)) {
             ScanPoll::Finished(result) => break result,
             ScanPoll::Running => {
-                if live {
+                if live && last_print.elapsed() >= Duration::from_millis(100) {
+                    last_print = std::time::Instant::now();
                     let s = progress.snapshot();
                     eprint!(
                         "\r{} files, {} folders, {} \u{2026}   ",
@@ -40,7 +43,7 @@ pub fn run(top: usize, source: &DumpSource) -> Result<(), String> {
                         format_bytes(s.bytes)
                     );
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(10));
             }
         }
     };

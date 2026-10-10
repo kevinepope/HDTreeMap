@@ -94,6 +94,15 @@ impl TreeBuilder {
         }
     }
 
+    /// The size the partial tree reads (its children stay unsorted until [`Self::finish`]).
+    pub fn set_size_mode(&mut self, mode: SizeMode) {
+        self.tree.mode = mode;
+    }
+
+    pub fn size_mode(&self) -> SizeMode {
+        self.tree.mode
+    }
+
     /// Sort every child list by `mode`, largest first, and return the finished tree.
     pub fn finish(mut self, mode: SizeMode) -> Tree {
         self.tree.mode = mode;

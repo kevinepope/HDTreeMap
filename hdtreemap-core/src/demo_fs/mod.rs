@@ -20,9 +20,9 @@ use web_time::Instant;
 
 pub use engine::{Entry, Expand, Generator};
 
-use crate::model::Tree;
+use crate::model::{SizeMode, Tree};
 use crate::platform::{profile, DemoPlatform, PlatformServices};
-use crate::scan::{ScanPoll, ScanProgress, ScanResult, ScanSource};
+use crate::scan::{PartialScan, ScanPoll, ScanProgress, ScanResult, ScanSource};
 
 /// The six simulated drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -138,6 +138,8 @@ const CHUNK: u64 = 2048;
 /// The demo scan source. See the module docs.
 pub struct DemoScanner {
     profile: DemoProfile,
+    /// Where the drive is "mounted" (the tree's root name).
+    root: PathBuf,
     generator: Generator,
     progress: Arc<ScanProgress>,
     /// Entries per second, when paced.
@@ -164,6 +166,7 @@ impl DemoScanner {
         };
         Self {
             profile,
+            root,
             generator,
             progress: Arc::new(ScanProgress::new()),
             rate,
@@ -198,7 +201,7 @@ impl DemoScanner {
         let (tree, errors) = self.generator.take()?;
         self.progress.mark_done();
         Some(ScanResult {
-            root: self.profile.mount_path(),
+            root: self.root.clone(),
             tree,
             errors,
             elapsed: self.started.elapsed(),
@@ -245,6 +248,18 @@ impl ScanSource for DemoScanner {
                 return ScanPoll::Running;
             }
         }
+    }
+
+    fn partial(&self) -> Option<PartialScan<'_>> {
+        Some(PartialScan {
+            root: &self.root,
+            tree: self.generator.tree()?,
+            errors: self.generator.errors(),
+        })
+    }
+
+    fn set_size_mode(&mut self, mode: SizeMode) {
+        self.generator.set_size_mode(mode);
     }
 }
 

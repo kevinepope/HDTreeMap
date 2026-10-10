@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use hdtreemap_core::model::{ExtTable, NodeFlags, NodeId, SizeMode, Tree};
 use hdtreemap_core::scan::{
-    scan_blocking, FsScanner, ScanPoll, ScanProgress, ScanResult, ScanSource,
+    scan_blocking, FsScanner, ScanPoll, ScanProgress, ScanResult, ScanSource, BATCH_RECORDS,
 };
 
 fn write(path: &Path, len: usize) {
@@ -132,6 +132,68 @@ fn the_fs_scanner_runs_on_a_worker_and_hands_back_the_tree() {
     assert!(progress.is_done());
     // A finished source never hands its result over twice.
     assert!(matches!(scanner.poll(Duration::ZERO), ScanPoll::Running));
+}
+
+/// Every node's path below the root with its sizes and flags, sorted.
+fn listing(tree: &Tree) -> Vec<(String, u64, u64, String)> {
+    let mut out = Vec::new();
+    let mut stack = vec![tree.root()];
+    while let Some(id) = stack.pop() {
+        let n = tree.node(id).expect("node");
+        let s = n.sizes();
+        out.push((
+            tree.relative_path(id),
+            s.allocated,
+            s.apparent,
+            format!("{:?}", n.flags()),
+        ));
+        stack.extend(tree.children(id));
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn the_live_scan_builds_the_same_tree_as_a_blocking_scan() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    // Enough entries for several batches.
+    for d in 0..40 {
+        for f in 0..(BATCH_RECORDS / 20) {
+            write(
+                &dir.path().join(format!("d{d:02}/sub/f{f}.dat")),
+                (d * 7 + f) % 3000,
+            );
+        }
+    }
+    sample_tree(dir.path());
+    let mut scanner = FsScanner::start(dir.path().to_path_buf(), None);
+    let mut partial_counts = Vec::new();
+    let result = loop {
+        match scanner.poll(Duration::from_micros(200)) {
+            ScanPoll::Finished(result) => break result,
+            ScanPoll::Running => {
+                if let Some(p) = scanner.partial() {
+                    partial_counts.push(p.tree.file_count());
+                }
+            }
+        }
+    };
+    assert!(scanner.partial().is_none(), "the tree was handed over");
+    assert!(
+        partial_counts.windows(2).all(|w| w[0] <= w[1]),
+        "the partial tree only grows"
+    );
+    let (blocking, _) = scan(dir.path());
+    assert_eq!(result.root, blocking.root);
+    assert_eq!(result.tree.total(), blocking.tree.total());
+    assert_eq!(result.tree.file_count(), blocking.tree.file_count());
+    assert_eq!(result.tree.dir_count(), blocking.tree.dir_count());
+    assert_eq!(listing(&result.tree), listing(&blocking.tree));
+    assert_eq!(result.errors, blocking.errors);
+    // Children are sorted, largest first, as after a blocking scan.
+    let root = result.tree.root();
+    let kids: Vec<NodeId> = result.tree.children(root).collect();
+    assert_eq!(kids, result.tree.children_by_size(root));
 }
 
 #[test]

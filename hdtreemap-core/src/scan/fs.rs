@@ -1,120 +1,141 @@
-//! `FsScanner`: the native scan source. Walks a real folder with jwalk on its own rayon
-//! pool, on a worker thread, and feeds a `TreeBuilder` (`docs/PLAN.md` §3.2).
+//! `FsScanner`: the native scan source. Walks a real folder with jwalk (`scan/walk.rs`) on
+//! a worker thread and builds the tree on the thread that polls it (`docs/PLAN.md` §3.2).
 //!
-//! jwalk reads directories in parallel and calls `process_read_dir` on the pool's threads
-//! for each batch of entries; that is where the expensive per-entry work happens (`lstat`,
-//! the allocated size, the device check that keeps the scan on one filesystem, hard-link
-//! de-duplication, skipping duplicate mounts). The walk then yields entries in depth-first
-//! order on the worker thread, which builds the tree with a stack of open directories.
+//! The worker turns entries into records and sends them over a channel in batches (every
+//! [`BATCH_RECORDS`] records or [`BATCH_INTERVAL`], whichever comes first): first the
+//! [`Assembler`] for the root, then the batches, then "done". [`ScanSource::poll`] (the UI
+//! thread, once a frame) applies whatever has arrived within its time budget, so the UI
+//! owns the growing tree: the live map lays out the partial tree directly, with no locks
+//! and no copies ([`ScanSource::partial`]). When the walk is done and every batch applied,
+//! the poll sorts the tree and hands back the [`ScanResult`].
 //!
-//! Progress goes to the shared [`ScanProgress`]; at most every [`NOTIFY_INTERVAL`] the
-//! worker publishes the current path and wakes the UI through its `UiQueue`. The finished
-//! [`ScanResult`] comes back over a channel that [`ScanSource::poll`] checks. Symlinks are
-//! never followed; unreadable entries are flagged, counted and listed, never fatal.
+//! [`scan_blocking`] runs the same walk and assembly on the calling thread, for
+//! `--dump-top` and the tests. Dropping an `FsScanner` cancels its walk.
 
-use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use agg_gui::ui_thread::UiQueue;
-use jwalk::{Parallelism, WalkDirGeneric};
 use web_time::Instant;
 
+use super::assemble::{failed_result, root_file_name, Assembler, Record};
 use super::fs_meta;
-use super::{ScanErrors, ScanPoll, ScanProgress, ScanResult, ScanSource};
-use crate::model::{NodeFlags, NodeId, SizeMode, Sizes, TreeBuilder, NAME_SLAB_LIMIT};
+use super::walk::walk;
+use super::{PartialScan, ScanPoll, ScanProgress, ScanResult, ScanSource};
+use crate::model::{SizeMode, NAME_SLAB_LIMIT};
 
-/// Longest gap between progress publications (current path + UI wake-up).
-pub const NOTIFY_INTERVAL: Duration = Duration::from_millis(100);
+/// Most records per batch sent to the polling thread.
+pub const BATCH_RECORDS: usize = 4096;
+/// Longest a record waits on the worker before its batch is sent.
+pub const BATCH_INTERVAL: Duration = Duration::from_millis(50);
 
-/// What `process_read_dir` learned about one entry, carried to the tree-building thread.
-#[derive(Debug, Default)]
-struct EntryInfo {
-    sizes: Sizes,
-    flags: NodeFlags,
-    /// Why the entry's metadata could not be read.
-    error: Option<String>,
-    /// A second hard link to a file already counted; dropped from the walk.
-    duplicate: bool,
-}
-
-type Walk = WalkDirGeneric<((), EntryInfo)>;
-
-/// Shared state of the per-entry filter (runs on jwalk's pool threads).
-struct Filter {
-    /// Devices that count as the scanned filesystem; empty means "don't check".
-    devices: Vec<u64>,
-    /// Directories to list but not enter.
-    skip: Vec<PathBuf>,
-    /// `(device, inode)` of multiply-linked files already counted.
-    seen_links: Mutex<HashSet<(u64, u64)>>,
-    progress: Arc<ScanProgress>,
+/// What the worker sends the polling thread.
+enum Message {
+    /// The tree's assembler (made on the worker: it looks at the root on disk).
+    Start(Box<Assembler>),
+    Batch(Vec<Record>),
+    /// The walk ended (finished or cancelled); no more batches follow.
+    Done,
 }
 
 /// A scan of a real folder running on a worker thread. Dropping it cancels the scan.
 pub struct FsScanner {
     progress: Arc<ScanProgress>,
-    result: Receiver<ScanResult>,
+    messages: Receiver<Message>,
     root: PathBuf,
+    assembler: Option<Box<Assembler>>,
+    /// The size mode to sort by (chosen before the assembler arrived, or since).
+    mode: SizeMode,
     finished: bool,
 }
 
 impl FsScanner {
     /// Start scanning `root` on a new thread. `notify` (the UI thread's queue) is woken as
-    /// progress is published and when the scan finishes.
+    /// progress is published, as batches go out, and when the walk ends.
     pub fn start(root: PathBuf, notify: Option<UiQueue>) -> Self {
         let root = fs_meta::resolve_root(&root);
         let progress = Arc::new(ScanProgress::new());
         let (tx, rx) = mpsc::channel();
         let worker_progress = Arc::clone(&progress);
         let worker_root = root.clone();
-        let spawned = std::thread::Builder::new()
+        // If the thread cannot be started, the closure (and `tx`) is dropped unrun; the
+        // poll then sees the channel closed with no assembler and reports the failure.
+        let _ = std::thread::Builder::new()
             .name("hdtreemap-scan".into())
             .spawn(move || {
-                let result = scan_blocking(&worker_root, &worker_progress, notify.as_ref());
+                walk_to_channel(&worker_root, &worker_progress, notify.as_ref(), &tx);
                 // The receiver is gone only when the scan was dropped (cancelled).
-                let _ = tx.send(result);
+                let _ = tx.send(Message::Done);
                 if let Some(queue) = &notify {
                     queue.signal_async_state_change();
                 }
             });
-        let result = match spawned {
-            Ok(_) => rx,
-            Err(err) => {
-                // No worker: the result is known now. `tx` died with the closure, so hand
-                // the failure over through a fresh, pre-loaded channel.
-                let (tx, rx) = mpsc::channel();
-                let message = format!("Could not start the scan: {err}");
-                let _ = tx.send(failed_result(&root, message, &progress));
-                rx
-            }
-        };
         Self {
             progress,
-            result,
+            messages: rx,
             root,
+            assembler: None,
+            mode: SizeMode::Allocated,
             finished: false,
         }
     }
+
+    /// Sort the tree and hand it over (once).
+    fn finish(&mut self) -> ScanPoll {
+        self.finished = true;
+        let result = match self.assembler.take() {
+            Some(assembler) => assembler.finish(),
+            // The worker died (or never started) before it looked at the root.
+            None => failed_result(
+                &self.root,
+                "The scan stopped unexpectedly.".to_string(),
+                &self.progress,
+            ),
+        };
+        ScanPoll::Finished(Box::new(result))
+    }
 }
 
-/// A result for a scan that could not run: the root alone, flagged, with `message` as its
-/// one error.
-fn failed_result(root: &Path, message: String, progress: &ScanProgress) -> ScanResult {
-    let mut errors = ScanErrors::default();
-    errors.record(root, message);
-    progress.add_error();
-    progress.mark_done();
-    let mut builder = TreeBuilder::new(&root.to_string_lossy());
-    builder.mark(builder.root(), NodeFlags::ERROR);
-    ScanResult {
-        root: root.to_path_buf(),
-        tree: builder.finish(SizeMode::Allocated),
-        errors,
-        elapsed: progress.elapsed(),
+/// The worker: walk `root`, sending the assembler and then batches of records to `tx`
+/// until the walk ends, the scan is cancelled, or the receiver is dropped.
+fn walk_to_channel(
+    root: &Path,
+    progress: &Arc<ScanProgress>,
+    notify: Option<&UiQueue>,
+    tx: &Sender<Message>,
+) {
+    let assembler = Assembler::new(root, progress, NAME_SLAB_LIMIT);
+    if tx.send(Message::Start(Box::new(assembler))).is_err() {
+        return;
+    }
+    let file_root = root_file_name(root);
+    let mut batch = Vec::with_capacity(BATCH_RECORDS);
+    let mut last_send = Instant::now();
+    let mut connected = true;
+    let send = |batch: &mut Vec<Record>| {
+        let full = std::mem::replace(batch, Vec::with_capacity(BATCH_RECORDS));
+        tx.send(Message::Batch(full)).is_ok()
+    };
+    walk(
+        root,
+        file_root.as_deref(),
+        progress,
+        notify,
+        &mut |record| {
+            batch.push(record);
+            if batch.len() >= BATCH_RECORDS
+                || (batch.len() % 64 == 0 && last_send.elapsed() >= BATCH_INTERVAL)
+            {
+                last_send = Instant::now();
+                connected = send(&mut batch);
+            }
+            connected
+        },
+    );
+    if connected && !batch.is_empty() {
+        send(&mut batch);
     }
 }
 
@@ -123,22 +144,51 @@ impl ScanSource for FsScanner {
         Arc::clone(&self.progress)
     }
 
-    fn poll(&mut self, _budget: Duration) -> ScanPoll {
+    fn poll(&mut self, budget: Duration) -> ScanPoll {
         if self.finished {
             return ScanPoll::Running;
         }
-        match self.result.try_recv() {
-            Ok(result) => {
-                self.finished = true;
-                ScanPoll::Finished(Box::new(result))
+        let deadline = Instant::now().checked_add(budget);
+        loop {
+            match self.messages.try_recv() {
+                Ok(Message::Start(mut assembler)) => {
+                    assembler.set_size_mode(self.mode);
+                    self.assembler = Some(assembler);
+                }
+                Ok(Message::Batch(records)) => {
+                    let Some(assembler) = self.assembler.as_mut() else {
+                        continue;
+                    };
+                    for record in records {
+                        if !assembler.apply(record) {
+                            // The tree is full: stop the walk and show what fitted.
+                            self.progress.cancel();
+                            return self.finish();
+                        }
+                    }
+                }
+                Ok(Message::Done) | Err(TryRecvError::Disconnected) => return self.finish(),
+                Err(TryRecvError::Empty) => return ScanPoll::Running,
             }
-            Err(TryRecvError::Empty) => ScanPoll::Running,
-            Err(TryRecvError::Disconnected) => {
-                // The worker died without a result (a panic). Report it as a failed scan.
-                self.finished = true;
-                let message = "The scan stopped unexpectedly.".to_string();
-                ScanPoll::Finished(Box::new(failed_result(&self.root, message, &self.progress)))
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return ScanPoll::Running;
             }
+        }
+    }
+
+    fn partial(&self) -> Option<PartialScan<'_>> {
+        let assembler = self.assembler.as_ref()?;
+        Some(PartialScan {
+            root: assembler.root(),
+            tree: assembler.tree(),
+            errors: assembler.errors(),
+        })
+    }
+
+    fn set_size_mode(&mut self, mode: SizeMode) {
+        self.mode = mode;
+        if let Some(assembler) = self.assembler.as_mut() {
+            assembler.set_size_mode(mode);
         }
     }
 }
@@ -149,9 +199,9 @@ impl Drop for FsScanner {
     }
 }
 
-/// Scan `root` on the calling thread (the worker, or a headless `--dump-top`), publishing to
-/// `progress` and waking `notify` at most every [`NOTIFY_INTERVAL`]. Returns early, with the
-/// partial tree, once `progress` is cancelled.
+/// Scan `root` on the calling thread (a headless `--dump-top`, the tests), publishing to
+/// `progress` and waking `notify` at most every [`super::NOTIFY_INTERVAL`]. Returns early,
+/// with the partial tree, once `progress` is cancelled.
 pub fn scan_blocking(
     root: &Path,
     progress: &Arc<ScanProgress>,
@@ -159,10 +209,6 @@ pub fn scan_blocking(
 ) -> ScanResult {
     scan_with_limit(root, progress, notify, NAME_SLAB_LIMIT)
 }
-
-/// What the error list says when the tree is full.
-const FULL_MESSAGE: &str = "The scan stopped: too many files to hold their names (over 4 GiB \
-                            of names). The map shows what was scanned until then.";
 
 /// [`scan_blocking`] with the tree's names capped at `name_limit` bytes. When they reach
 /// it the scan stops, and says so in its errors.
@@ -172,227 +218,17 @@ fn scan_with_limit(
     notify: Option<&UiQueue>,
     name_limit: usize,
 ) -> ScanResult {
-    let resolved = fs_meta::resolve_root(root);
-    let root = resolved.as_path();
-    let mut errors = ScanErrors::default();
-    let file_root = root_file_name(root);
-    let root_name = match (&file_root, root.parent()) {
-        // A single file: the tree's root is its folder, so the file's path comes out right.
-        (Some(_), Some(parent)) => parent.to_string_lossy(),
-        _ => root.to_string_lossy(),
-    };
-    let mut builder = TreeBuilder::with_name_limit(&root_name, name_limit);
-    let root_lossy = match (&file_root, root.parent()) {
-        (Some(_), Some(parent)) => parent.to_str().is_none(),
-        _ => root.to_str().is_none(),
-    };
-    if root_lossy {
-        builder.mark(builder.root(), NodeFlags::LOSSY_NAME);
-    }
-    let walk = build_walk(root, progress);
-    progress.set_current_path(&root.to_string_lossy());
-
-    // stack[d] is the open directory at depth d.
-    let mut stack: Vec<NodeId> = vec![builder.root()];
-    let mut last_notify = Instant::now();
-    let mut since_check = 0u32;
-    for item in walk {
-        if progress.is_cancelled() {
-            break;
-        }
-        match item {
-            Err(err) => {
-                let path = err
-                    .path()
-                    .map_or_else(|| root.to_path_buf(), Path::to_path_buf);
-                if path == root {
-                    // The root itself is missing or unreadable: flag it, as any folder.
-                    builder.mark(builder.root(), NodeFlags::ERROR);
-                }
-                errors.record(&path, err.to_string());
-                progress.add_error();
-            }
-            Ok(entry) => {
-                let info = &entry.client_state;
-                let node = if entry.depth == 0 {
-                    let root_id = builder.root();
-                    match &file_root {
-                        // Scanning a single file: it is the only child of its folder.
-                        Some(name) if info.error.is_none() => {
-                            progress.add_file(info.sizes.allocated);
-                            let mut flags = info.flags;
-                            if root.file_name().is_some_and(|n| n.to_str().is_none()) {
-                                flags.insert(NodeFlags::LOSSY_NAME);
-                            }
-                            builder.add_file(root_id, name, info.sizes, flags)
-                        }
-                        _ => {
-                            builder.mark(root_id, info.flags);
-                            root_id
-                        }
-                    }
-                } else {
-                    stack.truncate(entry.depth);
-                    let parent = stack.last().copied().unwrap_or_else(|| builder.root());
-                    let name = entry.file_name.to_string_lossy();
-                    let mut flags = info.flags;
-                    if entry.file_name.to_str().is_none() {
-                        flags.insert(NodeFlags::LOSSY_NAME);
-                    }
-                    if entry.file_type.is_dir() {
-                        let id = builder.add_dir(parent, &name);
-                        builder.mark(id, flags);
-                        progress.add_dir();
-                        stack.push(id);
-                        id
-                    } else {
-                        progress.add_file(info.sizes.allocated);
-                        builder.add_file(parent, &name, info.sizes, flags)
-                    }
-                };
-                if builder.is_full() {
-                    errors.record(root, FULL_MESSAGE);
-                    progress.add_error();
-                    break;
-                }
-                let failure = info
-                    .error
-                    .clone()
-                    .or_else(|| entry.read_children_error.as_ref().map(|e| e.to_string()));
-                if let Some(message) = failure {
-                    builder.mark(node, NodeFlags::ERROR);
-                    errors.record(&entry.path(), message);
-                    progress.add_error();
-                }
-                since_check += 1;
-                if since_check >= 256 {
-                    since_check = 0;
-                    if last_notify.elapsed() >= NOTIFY_INTERVAL {
-                        last_notify = Instant::now();
-                        progress.set_current_path(&entry.parent_path.to_string_lossy());
-                        if let Some(queue) = notify {
-                            queue.signal_async_state_change();
-                        }
-                    }
-                }
-            }
-        }
-    }
-    progress.mark_done();
-    ScanResult {
-        root: root.to_path_buf(),
-        tree: builder.finish(SizeMode::Allocated),
-        errors,
-        elapsed: progress.elapsed(),
-    }
-}
-
-/// The file name to list when `root` is a file (or a link to one) rather than a folder.
-fn root_file_name(root: &Path) -> Option<String> {
-    let meta = fs::metadata(root).ok()?;
-    if meta.is_dir() {
-        return None;
-    }
-    root.file_name().map(|n| n.to_string_lossy().into_owned())
-}
-
-/// The configured jwalk walk over `root`: hidden files included, symlinks not followed, its
-/// own rayon pool, and the per-entry filter below.
-fn build_walk(root: &Path, progress: &Arc<ScanProgress>) -> Walk {
-    let (devices, skip) = match fs_meta::mount_plan(root) {
-        // Linux: the mount table names every mount point to skip; no device check.
-        Some(skip) => (Vec::new(), skip),
-        None => {
-            let mut devices: Vec<u64> = fs::metadata(root)
-                .ok()
-                .and_then(|m| fs_meta::device(&m))
-                .into_iter()
-                .collect();
-            if !devices.is_empty() {
-                devices.extend(fs_meta::sibling_devices(root));
-            }
-            (devices, fs_meta::duplicate_mounts(root))
-        }
-    };
-    let filter = Arc::new(Filter {
-        devices,
-        skip,
-        seen_links: Mutex::new(HashSet::new()),
-        progress: Arc::clone(progress),
-    });
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    Walk::new(root)
-        .skip_hidden(false)
-        .follow_links(false)
-        .sort(false)
-        .parallelism(Parallelism::RayonNewPool(threads))
-        .process_read_dir(move |depth, dir, _state, children| {
-            filter.process(depth.is_none(), dir, children);
-        })
-}
-
-impl Filter {
-    /// Fill in each entry's [`EntryInfo`] and decide which directories to enter.
-    fn process(
-        &self,
-        is_root: bool,
-        dir: &Path,
-        children: &mut Vec<jwalk::Result<jwalk::DirEntry<((), EntryInfo)>>>,
-    ) {
-        if self.progress.is_cancelled() {
-            children.clear();
-            return;
-        }
-        for entry in children.iter_mut().flatten() {
-            let path = dir.join(&entry.file_name);
-            // The root itself is given by the user and may be a symlink to a folder (a
-            // macOS `/Volumes/Macintosh HD`); jwalk follows it, so read what it points to.
-            let path = if is_root { entry.path() } else { path };
-            let meta = if is_root {
-                fs::metadata(&path)
-            } else {
-                fs::symlink_metadata(&path)
-            };
-            let meta = match meta {
-                Ok(meta) => meta,
-                Err(err) => {
-                    entry.client_state.error = Some(err.to_string());
-                    entry.read_children_path = None;
-                    continue;
-                }
-            };
-            let info = &mut entry.client_state;
-            if meta.file_type().is_symlink() {
-                info.flags.insert(NodeFlags::SYMLINK);
-                info.sizes = fs_meta::sizes(&path, &meta);
-                continue;
-            }
-            if meta.is_dir() {
-                if is_root {
-                    continue;
-                }
-                let other_device = fs_meta::device(&meta)
-                    .is_some_and(|dev| !self.devices.is_empty() && !self.devices.contains(&dev));
-                if other_device || self.skip.contains(&path) {
-                    info.flags.insert(NodeFlags::SKIPPED);
-                    entry.read_children_path = None;
-                }
-                continue;
-            }
-            if let Some(key) = fs_meta::hard_link_key(&meta) {
-                let mut seen = self
-                    .seen_links
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if !seen.insert(key) {
-                    info.duplicate = true;
-                    continue;
-                }
-            }
-            info.sizes = fs_meta::sizes(&path, &meta);
-        }
-        children.retain(|c| c.as_ref().map_or(true, |e| !e.client_state.duplicate));
-    }
+    let root = fs_meta::resolve_root(root);
+    let mut assembler = Assembler::new(&root, progress, name_limit);
+    let file_root = root_file_name(&root);
+    walk(
+        &root,
+        file_root.as_deref(),
+        progress,
+        notify,
+        &mut |record| assembler.apply(record),
+    );
+    assembler.finish()
 }
 
 #[cfg(test)]

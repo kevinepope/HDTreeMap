@@ -152,14 +152,24 @@ impl Generator {
         self.builder.as_ref().map(TreeBuilder::tree)
     }
 
-    /// Finish: sort the tree and hand it over with the simulated errors. `None` if already
-    /// taken.
+    /// The simulated errors so far.
+    pub fn errors(&self) -> &ScanErrors {
+        &self.errors
+    }
+
+    /// The size the partial tree reads and the finished tree is sorted by.
+    pub fn set_size_mode(&mut self, mode: SizeMode) {
+        if let Some(builder) = self.builder.as_mut() {
+            builder.set_size_mode(mode);
+        }
+    }
+
+    /// Finish: sort the tree (by its size mode, allocated unless set) and hand it over with
+    /// the simulated errors. `None` if already taken.
     pub fn take(&mut self) -> Option<(Tree, ScanErrors)> {
         let builder = self.builder.take()?;
-        Some((
-            builder.finish(SizeMode::Allocated),
-            std::mem::take(&mut self.errors),
-        ))
+        let mode = builder.size_mode();
+        Some((builder.finish(mode), std::mem::take(&mut self.errors)))
     }
 }
 
