@@ -119,6 +119,40 @@ fn ext_table_totals_by_lower_cased_extension() {
 }
 
 #[test]
+fn ext_table_of_a_subtree_counts_only_its_files() {
+    let (mut tree, [docs, _, _, old, _, video, empty, root]) = sample();
+    let table = ExtTable::from_subtree(&tree, docs);
+    let names: Vec<&str> = table.rows().iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["pdf", "txt"]);
+    assert_eq!(table.get("pdf").map(|r| r.count), Some(3));
+    let old_table = ExtTable::from_subtree(&tree, old);
+    assert_eq!(old_table.rows().len(), 1);
+    assert_eq!(old_table.rows()[0].sizes, Sizes::new(200, 150));
+    let pdf = old_table.rows()[0].ext;
+    assert_eq!(old_table.by_ext(pdf).map(|r| r.count), Some(1));
+    // The root's table is the whole tree's; an empty folder or a file root has nothing
+    // below it except the file itself, and an unknown id has nothing.
+    assert_eq!(
+        ExtTable::from_subtree(&tree, root).rows(),
+        ExtTable::from_tree(&tree).rows()
+    );
+    assert!(ExtTable::from_subtree(&tree, empty).rows().is_empty());
+    assert_eq!(ExtTable::from_subtree(&tree, video).rows().len(), 1);
+    assert!(ExtTable::from_subtree(&tree, NodeId(9999))
+        .rows()
+        .is_empty());
+    // A removed folder has no table.
+    tree.remove_subtree(old).expect("removable");
+    assert!(ExtTable::from_subtree(&tree, old).rows().is_empty());
+    assert_eq!(
+        ExtTable::from_subtree(&tree, docs)
+            .get("pdf")
+            .map(|r| r.count),
+        Some(2)
+    );
+}
+
+#[test]
 fn files_without_extension_share_row_zero() {
     let mut b = TreeBuilder::new("/r");
     let root = b.root();

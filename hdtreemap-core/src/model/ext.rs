@@ -1,8 +1,9 @@
 //! `ExtTable`: totals per file extension (bytes in both size modes, file count), computed
-//! from a finished [`Tree`]. The results screen lists its top rows; the extension legend and
-//! the treemap's colours (milestones M2/M3) are keyed by the same extension ids.
+//! from a finished [`Tree`] or one folder of it. The treemap's colours come from the whole
+//! scan's table; the extension legend lists the table of the map's zoom root
+//! ([`ExtTable::from_subtree`]). Both are keyed by the same extension ids.
 
-use super::node::{SizeMode, Sizes};
+use super::node::{NodeFlags, NodeId, SizeMode, Sizes};
 use super::tree::Tree;
 
 /// Totals for one extension.
@@ -28,15 +29,38 @@ impl ExtTable {
     pub fn from_tree(tree: &Tree) -> Self {
         let mut totals: Vec<(Sizes, u64)> = vec![(Sizes::default(), 0); tree.ext_count()];
         for node in &tree.nodes {
-            if node.is_dir() || node.flags.contains(super::node::NodeFlags::REMOVED) {
+            if node.is_dir() || node.flags.contains(NodeFlags::REMOVED) {
                 continue;
             }
-            if let Some((sizes, count)) = totals.get_mut(usize::from(node.ext)) {
-                sizes.allocated += node.allocated;
-                sizes.apparent += node.apparent;
-                *count += 1;
+            add_file(&mut totals, node);
+        }
+        Self::from_totals(tree, totals)
+    }
+
+    /// Total the live files below folder `root` (the whole tree for the scan root; an
+    /// empty table for an unknown or removed node), sorted like [`ExtTable::from_tree`].
+    pub fn from_subtree(tree: &Tree, root: NodeId) -> Self {
+        if root == tree.root() {
+            return Self::from_tree(tree);
+        }
+        let mut totals: Vec<(Sizes, u64)> = vec![(Sizes::default(), 0); tree.ext_count()];
+        if tree.is_live(root) {
+            let mut stack = vec![root];
+            while let Some(id) = stack.pop() {
+                let Some(node) = tree.node(id) else {
+                    continue;
+                };
+                if node.is_dir() {
+                    stack.extend(tree.children(id));
+                } else {
+                    add_file(&mut totals, node);
+                }
             }
         }
+        Self::from_totals(tree, totals)
+    }
+
+    fn from_totals(tree: &Tree, totals: Vec<(Sizes, u64)>) -> Self {
         let rows = totals
             .into_iter()
             .enumerate()
@@ -78,5 +102,18 @@ impl ExtTable {
     /// The row for an extension name (`""` for none).
     pub fn get(&self, name: &str) -> Option<&ExtRow> {
         self.rows.iter().find(|r| r.name == name)
+    }
+
+    /// The row for an extension id.
+    pub fn by_ext(&self, ext: u16) -> Option<&ExtRow> {
+        self.rows.iter().find(|r| r.ext == ext)
+    }
+}
+
+fn add_file(totals: &mut [(Sizes, u64)], node: &super::node::Node) {
+    if let Some((sizes, count)) = totals.get_mut(usize::from(node.ext)) {
+        sizes.allocated += node.allocated;
+        sizes.apparent += node.apparent;
+        *count += 1;
     }
 }
