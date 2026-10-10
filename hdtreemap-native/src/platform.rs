@@ -146,10 +146,12 @@ fn reveal_in_file_manager(path: &Path) -> ActionResult {
 
 #[cfg(windows)]
 fn reveal_in_file_manager(path: &Path) -> ActionResult {
+    use std::os::windows::process::CommandExt;
     // explorer.exe reports exit code 1 even when it worked, so only a launch failure counts.
+    // It parses its own command line: the path must be quoted right after `/select,`, which
+    // std's argument quoting would not do (it quotes the whole argument).
     Command::new("explorer")
-        .arg("/select,")
-        .arg(path)
+        .raw_arg(explorer_select_arg(path))
         .spawn()
         .map(|_| ActionOutcome::Done)
         .map_err(|err| reveal_error(path, err))
@@ -177,6 +179,12 @@ fn reveal_in_file_manager(path: &Path) -> ActionResult {
     let mut xdg = Command::new("xdg-open");
     xdg.arg(folder);
     run_checked(xdg, path)
+}
+
+/// explorer's `/select,"<path>"` argument (Windows paths cannot contain `"`).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn explorer_select_arg(path: &Path) -> String {
+    format!("/select,\"{}\"", path.display())
 }
 
 /// `file://` URI for an absolute path, percent-encoding every byte outside RFC 3986's
@@ -209,6 +217,14 @@ mod tests {
         assert_eq!(
             file_uri(Path::new("/home/me/My Files/ü#1")),
             "file:///home/me/My%20Files/%C3%BC%231"
+        );
+    }
+
+    #[test]
+    fn explorer_gets_the_path_quoted_after_select() {
+        assert_eq!(
+            explorer_select_arg(Path::new(r"C:\My Files\a,b.txt")),
+            r#"/select,"C:\My Files\a,b.txt""#
         );
     }
 

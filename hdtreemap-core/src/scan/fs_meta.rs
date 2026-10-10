@@ -3,8 +3,8 @@
 //! paths. Kept apart from the walk so every `cfg` lives in one place.
 //!
 //! - Allocated size: Unix `st_blocks * 512`; Windows `GetCompressedFileSizeW` (compressed,
-//!   sparse and cloud-placeholder files report what they really occupy), falling back to
-//!   the apparent size; elsewhere the apparent size.
+//!   sparse and cloud-placeholder files report what they really occupy; long paths get the
+//!   `\\?\` prefix), falling back to the apparent size; elsewhere the apparent size.
 //! - Devices and hard links are Unix-only (`st_dev`, `st_ino`, `st_nlink`). On Windows,
 //!   junctions and mounted volumes are reparse points that std reports as symlinks, which the
 //!   walk never follows, so it stays on one volume without a device check.
@@ -69,11 +69,11 @@ fn allocated(path: &Path, meta: &Metadata) -> u64 {
     if !meta.is_file() {
         return meta.len();
     }
-    let wide: Vec<u16> = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    let long = path.to_str().map(long_path_for_win32);
+    let os = long
+        .as_deref()
+        .map_or(path.as_os_str(), std::ffi::OsStr::new);
+    let wide: Vec<u16> = os.encode_wide().chain(std::iter::once(0)).collect();
     let mut high: u32 = 0;
     // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call, and `high` is a
     // valid, writable u32 for the high half of the size. GetLastError is read right after on
@@ -91,6 +91,29 @@ fn allocated(path: &Path, meta: &Metadata) -> u64 {
         return meta.len();
     }
     (u64::from(high) << 32) | u64::from(low)
+}
+
+/// Longest path the plain Win32 file APIs accept.
+const WIN32_MAX_PATH: usize = 260;
+
+/// `path` in the form the Win32 file APIs accept at any length: an absolute drive or UNC
+/// path of [`WIN32_MAX_PATH`] or more gets the `\\?\` (or `\\?\UNC\`) prefix, with its
+/// separators made backslashes (verbatim paths take them literally). Shorter, relative,
+/// device and already-verbatim paths are returned as they are.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(super) fn long_path_for_win32(path: &str) -> String {
+    if path.len() < WIN32_MAX_PATH || path.starts_with(r"\\?\") || path.starts_with(r"\\.\") {
+        return path.to_string();
+    }
+    let backslashed = path.replace('/', "\\");
+    if let Some(unc) = backslashed.strip_prefix(r"\\") {
+        return format!(r"\\?\UNC\{unc}");
+    }
+    let b = backslashed.as_bytes();
+    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' {
+        return format!(r"\\?\{backslashed}");
+    }
+    path.to_string()
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -222,6 +245,28 @@ mod tests {
         assert_eq!(strip_verbatim(r"\\?\Volume{abc}\x"), None);
         assert_eq!(strip_verbatim(r"C:\plain"), None);
         assert_eq!(strip_verbatim("/usr/local"), None);
+    }
+
+    #[test]
+    fn long_windows_paths_get_a_verbatim_prefix() {
+        assert_eq!(
+            long_path_for_win32(r"C:\short\file.txt"),
+            r"C:\short\file.txt"
+        );
+        let long_dir = "d".repeat(300);
+        assert_eq!(
+            long_path_for_win32(&format!(r"C:\{long_dir}/f.txt")),
+            format!(r"\\?\C:\{long_dir}\f.txt")
+        );
+        assert_eq!(
+            long_path_for_win32(&format!(r"\\server\share\{long_dir}")),
+            format!(r"\\?\UNC\server\share\{long_dir}")
+        );
+        let already = format!(r"\\?\C:\{long_dir}");
+        assert_eq!(long_path_for_win32(&already), already);
+        // A relative path cannot take the prefix; it is left for the API to resolve.
+        let relative = format!(r"rel\{long_dir}");
+        assert_eq!(long_path_for_win32(&relative), relative);
     }
 
     #[cfg(target_os = "macos")]

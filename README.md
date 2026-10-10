@@ -36,6 +36,18 @@ extension legend. Actions (reveal, open, Move to Trash) come next. See
 - Reveal in Finder / Explorer / file manager, Open, Copy Path, Rescan, and Move to Trash
   (with confirmation; never a permanent delete).
 
+## Known limitations
+
+- **Hard links on Windows are counted once per link.** On macOS and Linux a file with
+  several hard links is counted once (by device and inode). Windows only reports a
+  file's link count and identity through an open handle (`GetFileInformationByHandle`);
+  opening every file during the scan to find the few with more than one link would slow
+  it down a lot, so a multiply-linked file (rare outside the WinSxS component store) is
+  counted at each of its paths.
+- Names that are not valid Unicode are shown with replacement characters. Reveal, Open
+  and Move to Trash refuse such items (and everything inside them), because the shown
+  path is not the real one; use your file manager for them.
+
 ## Build and run
 
 You need a Rust toolchain (1.87 or newer). The workspace expects
