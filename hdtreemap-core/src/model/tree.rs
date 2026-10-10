@@ -34,11 +34,19 @@ pub struct Tree {
     pub(crate) mode: SizeMode,
     /// Live (not removed) directories, the root included.
     pub(crate) dirs: u64,
+    /// Most bytes the name slab may hold: node offsets into it are `u32`.
+    pub(crate) name_limit: usize,
 }
 
+/// The name slab's capacity: every name must start and end within a `u32` offset.
+pub const NAME_SLAB_LIMIT: usize = u32::MAX as usize;
+
 impl Tree {
-    /// A tree holding only a root directory named `root_name` (the scanned path).
-    pub(crate) fn with_root(root_name: &str) -> Self {
+    /// A tree holding only a root directory named `root_name` (the scanned path), whose
+    /// names may take up to `name_limit` bytes in all (at most [`NAME_SLAB_LIMIT`]).
+    // On 32-bit targets (wasm) the cap is `usize::MAX`, so `min` changes nothing there.
+    #[allow(clippy::unnecessary_min_or_max)]
+    pub(crate) fn with_root(root_name: &str, name_limit: usize) -> Self {
         let mut tree = Self {
             nodes: Vec::new(),
             names: String::new(),
@@ -46,22 +54,40 @@ impl Tree {
             ext_ids: HashMap::new(),
             mode: SizeMode::default(),
             dirs: 0,
+            name_limit: name_limit.min(NAME_SLAB_LIMIT),
         };
-        tree.push_node(NodeId::NONE, root_name, NodeFlags::DIR);
+        // A root name too long for the limit is cut (on a character boundary) rather than
+        // leaving a tree without a root.
+        let mut cut = root_name.len().min(tree.name_limit);
+        while !root_name.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let _ = tree.push_node(NodeId::NONE, &root_name[..cut], NodeFlags::DIR);
         tree
     }
 
-    /// Append a node (unlinked) and its name; returns its id.
-    pub(crate) fn push_node(&mut self, parent: NodeId, name: &str, flags: NodeFlags) -> NodeId {
-        // A u32 arena holds four billion entries, far beyond what fits in memory.
-        let id = NodeId(self.nodes.len() as u32);
-        let start = self.names.len() as u32;
+    /// Append a node (unlinked) and its name; returns its id, or `None` when the name would
+    /// end past the name slab's limit or the arena is out of ids (the tree is full).
+    pub(crate) fn push_node(
+        &mut self,
+        parent: NodeId,
+        name: &str,
+        flags: NodeFlags,
+    ) -> Option<NodeId> {
+        let end = self.names.len().checked_add(name.len())?;
+        if end > self.name_limit {
+            return None;
+        }
+        let id = u32::try_from(self.nodes.len())
+            .ok()
+            .filter(|&i| i != NodeId::NONE.0)?;
+        let start = u32::try_from(self.names.len()).ok()?;
         self.names.push_str(name);
         self.nodes.push(Node::new(parent, start, flags));
         if flags.contains(NodeFlags::DIR) {
             self.dirs += 1;
         }
-        id
+        Some(NodeId(id))
     }
 
     /// The scan root (always node 0).

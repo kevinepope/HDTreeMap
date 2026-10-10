@@ -7,20 +7,36 @@
 //! sorts every child list by the chosen size and hands the tree over.
 
 use super::node::{extension_of, NodeFlags, NodeId, SizeMode, Sizes, NO_EXT};
-use super::tree::Tree;
+use super::tree::{Tree, NAME_SLAB_LIMIT};
 
 /// Builds a [`Tree`] incrementally. See the module docs.
 #[derive(Debug)]
 pub struct TreeBuilder {
     tree: Tree,
+    /// An entry did not fit (see [`TreeBuilder::is_full`]).
+    full: bool,
 }
 
 impl TreeBuilder {
     /// Start a tree whose root directory is `root_name` (the scanned path).
     pub fn new(root_name: &str) -> Self {
+        Self::with_name_limit(root_name, NAME_SLAB_LIMIT)
+    }
+
+    /// Start a tree whose names may take at most `limit` bytes in all (capped at
+    /// [`NAME_SLAB_LIMIT`]); tests use a small limit to reach "full" quickly.
+    pub fn with_name_limit(root_name: &str, limit: usize) -> Self {
         Self {
-            tree: Tree::with_root(root_name),
+            tree: Tree::with_root(root_name, limit),
+            full: false,
         }
+    }
+
+    /// Whether an entry was refused because the tree is full (its names reached the name
+    /// slab's limit, about 4 GiB). Every add after that is refused too and returns
+    /// [`NodeId::NONE`]; a scan should stop and say so.
+    pub fn is_full(&self) -> bool {
+        self.full
     }
 
     pub fn root(&self) -> NodeId {
@@ -32,7 +48,7 @@ impl TreeBuilder {
         &self.tree
     }
 
-    /// Add an (empty) directory named `name` under `parent`.
+    /// Add an (empty) directory named `name` under `parent` ([`NodeId::NONE`] when full).
     pub fn add_dir(&mut self, parent: NodeId, name: &str) -> NodeId {
         self.add(parent, name, NodeFlags::DIR)
     }
@@ -49,6 +65,9 @@ impl TreeBuilder {
     ) -> NodeId {
         let flags = flags.without(NodeFlags::DIR);
         let id = self.add(parent, name, flags);
+        if id.is_none() {
+            return id;
+        }
         let ext = match extension_of(name) {
             Some(ext) => self.tree.intern_ext(&ext),
             None => NO_EXT,
@@ -83,13 +102,19 @@ impl TreeBuilder {
     }
 
     fn add(&mut self, parent: NodeId, name: &str, flags: NodeFlags) -> NodeId {
+        if self.full {
+            return NodeId::NONE;
+        }
         // An unknown parent would orphan the entry; hang it under the root instead.
         let parent = if self.tree.node(parent).is_some() {
             parent
         } else {
             self.tree.root()
         };
-        let id = self.tree.push_node(parent, name, flags);
+        let Some(id) = self.tree.push_node(parent, name, flags) else {
+            self.full = true;
+            return NodeId::NONE;
+        };
         let first = self.tree.nodes[parent.index()].first_child;
         self.tree.nodes[id.index()].next_sibling = first;
         self.tree.nodes[parent.index()].first_child = id;

@@ -316,3 +316,21 @@ fn extension_totals_saturate_instead_of_overflowing() {
         assert_eq!(row.count, 2);
     }
 }
+
+#[test]
+fn a_full_name_slab_refuses_entries_instead_of_wrapping() {
+    // 4 GiB of names would wrap a u32 offset; a small limit stands in for it.
+    let mut b = TreeBuilder::with_name_limit("/r", 12);
+    let root = b.root();
+    let a = b.add_file(root, "abcd", Sizes::new(5, 5), NodeFlags::empty());
+    assert!(!a.is_none() && !b.is_full());
+    let d = b.add_dir(root, "efghijk");
+    assert!(d.is_none(), "the name would end past the limit");
+    assert!(b.is_full());
+    let after = b.add_file(root, "x", Sizes::new(7, 7), NodeFlags::empty());
+    assert!(after.is_none(), "nothing is added once full");
+    let tree = b.finish(SizeMode::Allocated);
+    assert_eq!(tree.arena_len(), 2);
+    assert_eq!(tree.total(), Sizes::new(5, 5));
+    assert_eq!(tree.name(a), "abcd");
+}

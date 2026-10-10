@@ -25,7 +25,7 @@ use web_time::Instant;
 
 use super::fs_meta;
 use super::{ScanErrors, ScanPoll, ScanProgress, ScanResult, ScanSource};
-use crate::model::{NodeFlags, NodeId, SizeMode, Sizes, TreeBuilder};
+use crate::model::{NodeFlags, NodeId, SizeMode, Sizes, TreeBuilder, NAME_SLAB_LIMIT};
 
 /// Longest gap between progress publications (current path + UI wake-up).
 pub const NOTIFY_INTERVAL: Duration = Duration::from_millis(100);
@@ -157,6 +157,21 @@ pub fn scan_blocking(
     progress: &Arc<ScanProgress>,
     notify: Option<&UiQueue>,
 ) -> ScanResult {
+    scan_with_limit(root, progress, notify, NAME_SLAB_LIMIT)
+}
+
+/// What the error list says when the tree is full.
+const FULL_MESSAGE: &str = "The scan stopped: too many files to hold their names (over 4 GiB \
+                            of names). The map shows what was scanned until then.";
+
+/// [`scan_blocking`] with the tree's names capped at `name_limit` bytes. When they reach
+/// it the scan stops, and says so in its errors.
+fn scan_with_limit(
+    root: &Path,
+    progress: &Arc<ScanProgress>,
+    notify: Option<&UiQueue>,
+    name_limit: usize,
+) -> ScanResult {
     let resolved = fs_meta::resolve_root(root);
     let root = resolved.as_path();
     let mut errors = ScanErrors::default();
@@ -166,7 +181,7 @@ pub fn scan_blocking(
         (Some(_), Some(parent)) => parent.to_string_lossy(),
         _ => root.to_string_lossy(),
     };
-    let mut builder = TreeBuilder::new(&root_name);
+    let mut builder = TreeBuilder::with_name_limit(&root_name, name_limit);
     let root_lossy = match (&file_root, root.parent()) {
         (Some(_), Some(parent)) => parent.to_str().is_none(),
         _ => root.to_str().is_none(),
@@ -231,6 +246,11 @@ pub fn scan_blocking(
                         builder.add_file(parent, &name, info.sizes, flags)
                     }
                 };
+                if builder.is_full() {
+                    errors.record(root, FULL_MESSAGE);
+                    progress.add_error();
+                    break;
+                }
                 let failure = info
                     .error
                     .clone()
@@ -368,5 +388,31 @@ impl Filter {
             info.sizes = fs_meta::sizes(&path, &meta);
         }
         children.retain(|c| c.as_ref().map_or(true, |e| !e.client_state.duplicate));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_full_name_slab_stops_the_scan_with_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for i in 0..20 {
+            std::fs::write(dir.path().join(format!("file-{i:02}.txt")), b"x").expect("write");
+        }
+        let progress = Arc::new(ScanProgress::new());
+        let root_len = resolve_root_len(dir.path());
+        let result = scan_with_limit(dir.path(), &progress, None, root_len + 40);
+        assert!(result.tree.file_count() < 20, "the scan stopped early");
+        assert!(result.tree.file_count() > 0);
+        assert_eq!(result.errors.total(), 1);
+        let message = &result.errors.entries()[0].message;
+        assert!(message.contains("too many"), "{message}");
+        assert!(progress.is_done());
+    }
+
+    fn resolve_root_len(root: &Path) -> usize {
+        fs_meta::resolve_root(root).to_string_lossy().len()
     }
 }

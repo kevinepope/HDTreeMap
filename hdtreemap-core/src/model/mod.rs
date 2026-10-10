@@ -14,7 +14,7 @@ pub mod tree;
 pub use builder::TreeBuilder;
 pub use ext::{ExtRow, ExtTable};
 pub use node::{extension_of, Node, NodeFlags, NodeId, SizeMode, Sizes, NO_EXT};
-pub use tree::{Children, RemoveError, Tree};
+pub use tree::{Children, RemoveError, Tree, NAME_SLAB_LIMIT};
 
 #[cfg(test)]
 mod tests;
