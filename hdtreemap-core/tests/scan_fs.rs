@@ -418,3 +418,60 @@ mod unix {
             .unwrap_or(false)
     }
 }
+
+/// macOS APFS: `cp -c` clones share their blocks, so a family is counted once (the first
+/// member in full, the rest at their private size); apparent sizes count every copy.
+/// Skipped where the temp folder cannot hold clones (not APFS).
+#[cfg(target_os = "macos")]
+#[test]
+fn apfs_clones_are_counted_once() {
+    use std::process::Command;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    // 2 MB that does not compress, so the blocks are really there.
+    let data: Vec<u8> = (0..2_000_000u32)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .collect();
+    fs::write(root.join("original.bin"), &data).expect("write");
+    for copy in ["clone1.bin", "sub/clone2.bin"] {
+        if let Some(parent) = root.join(copy).parent() {
+            fs::create_dir_all(parent).expect("mkdir");
+        }
+        let cloned = Command::new("cp")
+            .arg("-c")
+            .arg(root.join("original.bin"))
+            .arg(root.join(copy))
+            .status()
+            .is_ok_and(|s| s.success());
+        if !cloned {
+            eprintln!("skipped: {} cannot hold clones (not APFS)", root.display());
+            return;
+        }
+    }
+    // A plain copy shares nothing and counts in full.
+    fs::write(root.join("copy.bin"), &data).expect("write");
+    let (result, _) = scan(root);
+    let tree = &result.tree;
+    let one = tree.sizes(find(tree, "copy.bin").expect("copy")).allocated;
+    assert!(one >= 2_000_000);
+    let total = tree.total();
+    assert_eq!(
+        total.apparent,
+        4 * 2_000_000,
+        "every copy's apparent size counts"
+    );
+    assert!(
+        total.allocated < 2 * one + 64 * 1024,
+        "the clones' blocks count once: {} allocated for 2 families of {one}",
+        total.allocated
+    );
+    assert!(total.allocated >= 2 * one);
+    // Exactly one member of the family carries its blocks.
+    let members = ["original.bin", "clone1.bin", "sub/clone2.bin"]
+        .map(|p| tree.sizes(find(tree, p).expect(p)).allocated);
+    assert_eq!(
+        members.iter().filter(|&&a| a >= one).count(),
+        1,
+        "{members:?}"
+    );
+}

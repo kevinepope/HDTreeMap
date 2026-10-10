@@ -4,7 +4,9 @@
 //! jwalk reads directories in parallel and calls `process_read_dir` on the pool's threads
 //! for each batch of entries; that is where the expensive per-entry work happens (the
 //! metadata, the allocated size, the device check that keeps the scan on one filesystem,
-//! hard-link de-duplication, skipping duplicate mounts). The walk then yields entries in
+//! hard-link de-duplication, skipping duplicate mounts). On macOS the metadata of a whole
+//! directory comes from one bulk read (`scan/apfs.rs`), which also lets APFS clones be
+//! counted once, like hard links. The walk then yields entries in
 //! depth-first order on the calling thread, which makes the records and hands them to a
 //! sink: the assembler itself (headless) or a batch sent to the UI thread (live).
 //!
@@ -52,6 +54,8 @@ struct Filter {
     skip: Vec<PathBuf>,
     /// `(device, inode)` of multiply-linked files already counted.
     seen_links: Mutex<HashSet<(u64, u64)>>,
+    /// APFS clone families already counted in full (`scan/apfs.rs`).
+    clones: Mutex<HashSet<CloneKey>>,
     progress: Arc<ScanProgress>,
 }
 
@@ -189,6 +193,7 @@ fn build_walk(root: &Path, progress: &Arc<ScanProgress>) -> Walk {
         devices,
         skip,
         seen_links: Mutex::new(HashSet::new()),
+        clones: Mutex::new(HashSet::new()),
         progress: Arc::clone(progress),
     });
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
@@ -200,6 +205,57 @@ fn build_walk(root: &Path, progress: &Arc<ScanProgress>) -> Walk {
         .process_read_dir(move |depth, dir, _state, children| {
             filter.process(depth.is_none(), dir, children);
         })
+}
+
+/// What the filter needs to know about one entry, from `lstat` or (macOS) a bulk read.
+struct EntryMeta {
+    is_symlink: bool,
+    is_dir: bool,
+    device: Option<u64>,
+    /// `(device, inode)` of a file with more than one hard link.
+    link_key: Option<(u64, u64)>,
+    sizes: Sizes,
+    /// The APFS clone family the file may share blocks with, and its private bytes.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    clone: Option<(CloneKey, u64)>,
+}
+
+/// Clone families are keyed by device and clone id (only built on macOS).
+#[cfg(target_os = "macos")]
+type CloneKey = super::apfs::CloneKey;
+#[cfg(not(target_os = "macos"))]
+type CloneKey = (u64, u64);
+
+impl EntryMeta {
+    fn from_std(path: &Path, meta: &fs::Metadata) -> Self {
+        Self {
+            is_symlink: meta.file_type().is_symlink(),
+            is_dir: meta.is_dir(),
+            device: fs_meta::device(meta),
+            link_key: fs_meta::hard_link_key(meta),
+            sizes: fs_meta::sizes(path, meta),
+            clone: None,
+        }
+    }
+
+    /// `b` (from a bulk read of the folder holding `path`); a file that may share blocks
+    /// costs one more call, for its clone family.
+    #[cfg(target_os = "macos")]
+    fn from_bulk(path: &Path, b: &super::apfs::BulkEntry) -> Self {
+        use super::apfs::Kind;
+        let is_file = b.kind == Kind::File;
+        Self {
+            is_symlink: b.kind == Kind::Symlink,
+            is_dir: b.kind == Kind::Dir,
+            device: Some(b.device),
+            link_key: (is_file && b.links > 1).then_some((b.device, b.file_id)),
+            sizes: Sizes::new(b.allocated, b.apparent),
+            clone: b
+                .may_share_blocks()
+                .then(|| super::apfs::clone_facts(path, b.device))
+                .flatten(),
+        }
+    }
 }
 
 impl Filter {
@@ -214,35 +270,56 @@ impl Filter {
             children.clear();
             return;
         }
+        // macOS: one bulk read for the whole directory instead of an lstat per entry; it
+        // also brings the APFS clone facts (`scan/apfs.rs`).
+        #[cfg(target_os = "macos")]
+        let bulk = if is_root || children.is_empty() {
+            None
+        } else {
+            super::apfs::read_dir(dir).ok()
+        };
         for entry in children.iter_mut().flatten() {
             let path = dir.join(&entry.file_name);
             // The root itself is given by the user and may be a symlink to a folder (a
             // macOS `/Volumes/Macintosh HD`); jwalk follows it, so read what it points to.
             let path = if is_root { entry.path() } else { path };
-            let meta = if is_root {
-                fs::metadata(&path)
-            } else {
-                fs::symlink_metadata(&path)
-            };
-            let meta = match meta {
-                Ok(meta) => meta,
-                Err(err) => {
-                    entry.client_state.error = Some(err.to_string());
-                    entry.read_children_path = None;
-                    continue;
+            #[cfg(target_os = "macos")]
+            let known = bulk
+                .as_ref()
+                .and_then(|b| b.get(entry.file_name.as_os_str()))
+                .map(|b| EntryMeta::from_bulk(&path, b));
+            #[cfg(not(target_os = "macos"))]
+            let known: Option<EntryMeta> = None;
+            let meta = match known {
+                Some(meta) => meta,
+                None => {
+                    let read = if is_root {
+                        fs::metadata(&path)
+                    } else {
+                        fs::symlink_metadata(&path)
+                    };
+                    match read {
+                        Ok(meta) => EntryMeta::from_std(&path, &meta),
+                        Err(err) => {
+                            entry.client_state.error = Some(err.to_string());
+                            entry.read_children_path = None;
+                            continue;
+                        }
+                    }
                 }
             };
             let info = &mut entry.client_state;
-            if meta.file_type().is_symlink() {
+            if meta.is_symlink {
                 info.flags.insert(NodeFlags::SYMLINK);
-                info.sizes = fs_meta::sizes(&path, &meta);
+                info.sizes = meta.sizes;
                 continue;
             }
-            if meta.is_dir() {
+            if meta.is_dir {
                 if is_root {
                     continue;
                 }
-                let other_device = fs_meta::device(&meta)
+                let other_device = meta
+                    .device
                     .is_some_and(|dev| !self.devices.is_empty() && !self.devices.contains(&dev));
                 if other_device || self.skip.contains(&path) {
                     info.flags.insert(NodeFlags::SKIPPED);
@@ -250,18 +327,26 @@ impl Filter {
                 }
                 continue;
             }
-            if let Some(key) = fs_meta::hard_link_key(&meta) {
-                let mut seen = self
-                    .seen_links
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if !seen.insert(key) {
+            if let Some(key) = meta.link_key {
+                if !lock(&self.seen_links).insert(key) {
                     info.duplicate = true;
                     continue;
                 }
             }
-            info.sizes = fs_meta::sizes(&path, &meta);
+            info.sizes = meta.sizes;
+            if let Some((family, private)) = meta.clone {
+                // A clone family's shared blocks count once: in full for the first member
+                // seen, the private bytes for the others.
+                if !lock(&self.clones).insert(family) {
+                    info.sizes.allocated = private.min(info.sizes.allocated);
+                }
+            }
         }
         children.retain(|c| c.as_ref().map_or(true, |e| !e.client_state.duplicate));
     }
+}
+
+/// A poisoned set only means another pool thread panicked mid-insert; it is still usable.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }

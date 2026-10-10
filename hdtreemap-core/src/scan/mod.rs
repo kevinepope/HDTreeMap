@@ -11,6 +11,8 @@
 //! - `demo_fs::DemoScanner` (all targets): streams a synthetic tree, a time-sliced chunk per
 //!   poll, so single-threaded wasm stays responsive.
 
+#[cfg(target_os = "macos")]
+mod apfs;
 #[cfg(not(target_arch = "wasm32"))]
 mod assemble;
 #[cfg(not(target_arch = "wasm32"))]
