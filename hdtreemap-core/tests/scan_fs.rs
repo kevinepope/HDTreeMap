@@ -131,6 +131,27 @@ fn a_missing_root_is_an_error_not_a_crash() {
 }
 
 #[test]
+fn a_file_root_has_correct_paths() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = dir.path().join("movie.mkv");
+    write(&file, 4321);
+    let (result, _) = scan(&file);
+    let tree = &result.tree;
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(tree.file_count(), 1);
+    assert_eq!(tree.total().apparent, 4321);
+    let child = tree.children(tree.root()).next().expect("the file");
+    assert_eq!(tree.name(child), "movie.mkv");
+    // The root is the file's folder and the child the file: no doubled file name.
+    let path = tree.path(child);
+    assert_eq!(path, tree.path(tree.root()).join("movie.mkv"));
+    assert_eq!(
+        fs::canonicalize(&path).expect("the path exists"),
+        fs::canonicalize(&file).expect("canonical")
+    );
+}
+
+#[test]
 fn a_cancelled_scan_stops_early() {
     let dir = tempfile::tempdir().expect("temp dir");
     for i in 0..50 {

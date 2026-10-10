@@ -157,7 +157,13 @@ pub fn scan_blocking(
     notify: Option<&UiQueue>,
 ) -> ScanResult {
     let mut errors = ScanErrors::default();
-    let mut builder = TreeBuilder::new(&root.to_string_lossy());
+    let file_root = root_file_name(root);
+    let root_name = match (&file_root, root.parent()) {
+        // A single file: the tree's root is its folder, so the file's path comes out right.
+        (Some(_), Some(parent)) => parent.to_string_lossy(),
+        _ => root.to_string_lossy(),
+    };
+    let mut builder = TreeBuilder::new(&root_name);
     let walk = build_walk(root, progress);
     progress.set_current_path(&root.to_string_lossy());
 
@@ -181,14 +187,17 @@ pub fn scan_blocking(
                 let info = &entry.client_state;
                 let node = if entry.depth == 0 {
                     let root_id = builder.root();
-                    if !entry.file_type.is_dir() && !entry.file_type.is_symlink() {
-                        // Scanning a single file: it is the root's only child.
-                        let name = entry.file_name.to_string_lossy();
-                        builder.add_file(root_id, &name, info.sizes, info.flags);
-                        progress.add_file(info.sizes.allocated);
+                    match &file_root {
+                        // Scanning a single file: it is the only child of its folder.
+                        Some(name) if info.error.is_none() => {
+                            progress.add_file(info.sizes.allocated);
+                            builder.add_file(root_id, name, info.sizes, info.flags)
+                        }
+                        _ => {
+                            builder.mark(root_id, info.flags);
+                            root_id
+                        }
                     }
-                    builder.mark(root_id, info.flags);
-                    root_id
                 } else {
                     stack.truncate(entry.depth);
                     let parent = stack.last().copied().unwrap_or_else(|| builder.root());
@@ -234,6 +243,15 @@ pub fn scan_blocking(
         errors,
         elapsed: progress.elapsed(),
     }
+}
+
+/// The file name to list when `root` is a file (or a link to one) rather than a folder.
+fn root_file_name(root: &Path) -> Option<String> {
+    let meta = fs::metadata(root).ok()?;
+    if meta.is_dir() {
+        return None;
+    }
+    root.file_name().map(|n| n.to_string_lossy().into_owned())
 }
 
 /// The configured jwalk walk over `root`: hidden files included, symlinks not followed, its
