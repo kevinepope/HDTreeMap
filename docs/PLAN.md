@@ -256,6 +256,18 @@ scheme, splitter ratios and the five most recent scan targets: natively
 values fall back to defaults. The start screen lists the recent scans. The folder tree's
 root row shows the drive or folder name, the full path as its tooltip.
 
+*As built (after v0.1.0):* a light theme by default, with dark and Match System
+(`theme.rs`, `state/theme.rs`), chosen from View ▸ Theme or the toolbar's sun/moon button
+and remembered in the settings blob (`"theme"`; missing or unknown means light, so
+v0.1.0 blobs start light). It switches live: most widgets paint with agg-gui's current
+`Visuals`; the few built with a theme colour rebuild on `AppState::theme_version`; the
+folder tree recolours its icons in place. The cushion hues are the same in both looks;
+folder-block grey and the empty background follow the look (so the map re-rasterises on a
+flip), and the hover / selection / folder outlines carry a contrasting inner line. Match
+System reads winit's `Window::theme` natively (macOS and Windows; X11 and Wayland report
+nothing, so light) and `prefers-color-scheme` on the web (watched with `matchMedia`); the
+demo page's background follows the remembered theme before the wasm loads.
+
 *As built (M4):* the root is a `Stack`: the menu bar (unless the shell installed the
 macOS system one) over the screen, then the overlays: a `ContextMenuHost` that opens an
 agg-gui `PopupMenu` for `AppState::request_context_menu` (from the map and the tree), the

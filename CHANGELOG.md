@@ -5,8 +5,17 @@ All notable changes to HDTreeMap are documented here.
 ## Unreleased
 
 ### Added
+- A light theme, now the default, with a dark one and Match System (the OS appearance on
+  macOS and Windows, `prefers-color-scheme` on the web; light where it cannot be read).
+  Choose it from View ▸ Theme or the toolbar's sun/moon button; it switches live and is
+  remembered (settings from 0.1.0 start light). Map outlines get a contrasting inner line
+  so they show on any rectangle, and the map's neutral greys follow the theme. The web
+  demo page is light too, and dark from the first paint when dark is remembered.
 - `run-mac.command`: a double-click macOS launcher that builds a release binary and
   starts the app, passing its arguments through (`[PATH | --demo ID]`).
+
+### Changed
+- The README hero shows the light theme.
 
 ## 0.1.0 — 2026-10-10
 

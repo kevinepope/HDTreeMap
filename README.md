@@ -35,9 +35,11 @@ server). It never reads anything on your computer.
   Explorer / Show in File Manager, Open, Copy Path, Zoom Here, Zoom to Parent, Rescan
   Folder (in the background, spliced into the map) and Move to Trash (confirmed first;
   never a permanent delete). Short notices in the corner say what happened.
+- **Light or dark.** Light by default; switch to dark, or follow the system, from
+  View ▸ Theme or the sun/moon button in the toolbar. It changes at once, no restart.
 - **Native feel.** The system menu bar on macOS (with shortcuts), an in-window menu bar
-  elsewhere; remembers the size mode, colours, shading, splitter positions, window size
-  and the last five folders and drives you scanned.
+  elsewhere; remembers the size mode, colours, shading, theme, splitter positions, window
+  size and the last five folders and drives you scanned.
 
 ## Install
 
