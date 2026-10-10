@@ -7,7 +7,10 @@
 //! `ToastHost`, which paints the state's toasts (`AppState::notify`) over everything in
 //! the bottom-right corner, clear of the status bar. The screen is a
 //! `Rebuilder` keyed on [`AppState::version`]: when the state switches screens it rebuilds
-//! the matching one on the next layout.
+//! the matching one on the next layout. Everything follows the light or dark look
+//! (`theme.rs`): most widgets paint with the current `Visuals`, and the few built with a
+//! theme colour rebuild on [`AppState::theme_version`] (the start screen as a whole; in the
+//! main view, the scan strip, status bar and theme button).
 //!
 //! - [`start_screen`] — app title, one clickable card per volume, "Choose Folder…", the
 //!   demo banner.
@@ -38,7 +41,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::widgets::toast::ToastHost;
-use agg_gui::{Insets, Rebuilder, Stack, Widget};
+use agg_gui::{HAnchor, Insets, Rebuilder, Stack, VAnchor, Widget};
 
 use crate::fonts::Fonts;
 use crate::platform::PlatformServices;
@@ -71,7 +74,19 @@ pub fn build_root(
     let screen = Rebuilder::new(
         move || version_state.version(),
         move || match screen_state.screen() {
-            Screen::Start => start_screen::build(&screen_state, &platform, &screen_fonts),
+            Screen::Start => {
+                // Built with theme colours: rebuilt when the look changes.
+                let (key, state) = (screen_state.clone(), screen_state.clone());
+                let (platform, fonts) = (Rc::clone(&platform), screen_fonts.clone());
+                Box::new(
+                    Rebuilder::new(
+                        move || key.theme_version(),
+                        move || start_screen::build(&state, &platform, &fonts),
+                    )
+                    .with_h_anchor(HAnchor::STRETCH)
+                    .with_v_anchor(VAnchor::STRETCH),
+                )
+            }
             Screen::Scanning(target) | Screen::Results(target) => {
                 main_view::build(&screen_commands, &target, &screen_fonts)
             }

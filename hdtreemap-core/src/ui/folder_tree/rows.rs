@@ -12,28 +12,40 @@
 //! opened.
 //!
 //! Each row shows a Font Awesome glyph, the name, the size in the active mode (the row's
-//! secondary text) and its share of the parent folder (the row's fraction bar).
+//! secondary text) and its share of the parent folder (the row's fraction bar). The glyph
+//! colours are the look's ([`recolor`] after a theme switch).
 //!
 //! `entries` runs parallel to `TreeView::nodes`; `index` maps a scanned node to its row.
 
 use std::collections::HashMap;
 
 use agg_gui::widgets::tree_view::TreeNode;
-use agg_gui::{Color, NodeGlyph, NodeIcon};
+use agg_gui::{current_visuals, NodeGlyph, NodeIcon};
 
 use crate::fonts::fa;
 use crate::format::{format_bytes, format_count};
 use crate::model::{NodeId, Tree};
+use crate::theme::{tree_glyphs, TreeGlyphs};
 
 /// Most children a folder lists; the rest share one "N more" row.
 pub const CHILD_CAP: usize = 200;
 
-/// Folder icons: the tree view's folder yellow.
-const FOLDER_COLOR: Color = Color::rgb(0.90, 0.72, 0.20);
-/// File icons.
-const FILE_COLOR: Color = Color::rgb(0.62, 0.74, 0.86);
-/// The "N more items" row.
-const MORE_COLOR: Color = Color::rgb(0.6, 0.6, 0.6);
+/// The icon colours of the look installed now (`theme::tree_glyphs`).
+fn glyphs() -> TreeGlyphs {
+    tree_glyphs(current_visuals().is_dark())
+}
+
+/// Give every row the icon colour of the look installed now (after a theme switch).
+pub fn recolor(nodes: &mut [TreeNode]) {
+    let colors = glyphs();
+    for glyph in nodes.iter_mut().filter_map(|n| n.icon_glyph.as_mut()) {
+        glyph.color = match glyph.glyph {
+            fa::FOLDER => colors.folder,
+            fa::FILE_O => colors.file,
+            _ => colors.more,
+        };
+    }
+}
 
 /// What a `TreeView` node stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,7 +130,7 @@ impl Rows {
             };
             let label = format!("{} more {noun}", format_count(rest_count));
             let mut row = TreeNode::new(label, NodeIcon::File, Some(idx), CHILD_CAP as u32);
-            row.icon_glyph = Some(NodeGlyph::new(fa::ELLIPSIS_H, MORE_COLOR));
+            row.icon_glyph = Some(NodeGlyph::new(fa::ELLIPSIS_H, glyphs().more));
             row.secondary_text = Some(format_bytes(rest_bytes));
             row.fraction = Some(share(rest_bytes, parent_size));
             let more = push(nodes, row);
@@ -258,10 +270,11 @@ impl Rows {
         order: u32,
     ) -> usize {
         let is_dir = tree.node(id).is_some_and(|n| n.is_dir());
+        let colors = glyphs();
         let (icon, glyph) = if is_dir {
-            (NodeIcon::Folder, NodeGlyph::new(fa::FOLDER, FOLDER_COLOR))
+            (NodeIcon::Folder, NodeGlyph::new(fa::FOLDER, colors.folder))
         } else {
-            (NodeIcon::File, NodeGlyph::new(fa::FILE_O, FILE_COLOR))
+            (NodeIcon::File, NodeGlyph::new(fa::FILE_O, colors.file))
         };
         let mut row = TreeNode::new(tree.name(id), icon, parent, order);
         row.icon_glyph = Some(glyph);

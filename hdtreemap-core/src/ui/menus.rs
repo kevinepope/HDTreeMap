@@ -23,6 +23,7 @@ use super::node_actions::{label, NodeAction, NodeActions};
 use crate::fonts::{fa, Fonts};
 use crate::model::{NodeId, SizeMode};
 use crate::render::ColorBy;
+use crate::theme::Theme;
 
 /// Widget id of the in-window menu bar.
 pub const MENU_BAR_ID: &str = "menu-bar";
@@ -224,6 +225,14 @@ pub fn menu_bar_spec(commands: &Commands, native_mac: bool) -> Vec<TopMenuSpec> 
             Some("Esc"),
             Some(fa::ERASER),
         ),
+        MenuSpec::Separator,
+        MenuSpec::Submenu {
+            label: "Theme".into(),
+            items: Theme::ALL
+                .into_iter()
+                .map(|theme| item(theme.label(), Command::Theme(theme), None, None))
+                .collect(),
+        },
     ];
 
     let mut help = Vec::new();
@@ -281,7 +290,9 @@ pub fn entries(commands: &Commands, items: &[MenuSpec]) -> Vec<MenuEntry> {
                     row = row.shortcut(shortcut);
                 }
                 row = match (spec.command, commands.checked(spec.command)) {
-                    (Command::SizeMode(_) | Command::ColorBy(_), Some(on)) => row.radio(on),
+                    (Command::SizeMode(_) | Command::ColorBy(_) | Command::Theme(_), Some(on)) => {
+                        row.radio(on)
+                    }
                     (_, Some(on)) => row.checked(on),
                     (_, None) => row,
                 };

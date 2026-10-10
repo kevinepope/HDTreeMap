@@ -7,8 +7,10 @@
 //! GPU backend keeps the texture while the `Arc` is unchanged. It lays out again only when
 //! the physical size (window size × DPI scale), the zoom root or the tree (new scan, size
 //! mode) changes, and rasterises again only then or when the shading or the palette (the
-//! colour scheme) changes. Hover, selection and the folder outline are vector strokes
-//! drawn over the image, so moving the mouse never re-rasterises. While a scan runs, a
+//! colour scheme, or the light / dark look's greys) changes. Hover, selection and the folder
+//! outline are vector strokes drawn over the image, so moving the mouse never
+//! re-rasterises; each has a contrasting line inside it, in the look's colours
+//! (`theme::map_overlay`), so it shows on any rectangle. While a scan runs, a
 //! live tick's new layout is rasterised on the following frame (the old picture stays up
 //! one frame longer), so layout and raster never land in the same frame.
 //!
@@ -51,17 +53,12 @@ use crate::layout::{layout, LayoutParams, PxRect, RectKind, TreemapLayout};
 use crate::model::{NodeId, Tree};
 use crate::render::{rasterise, stats_enabled, Palette, Shading};
 use crate::state::{AppState, Hover};
+use crate::theme::map_overlay;
 use highlight::Highlight;
 
 /// Widget id of the treemap.
 pub const TREEMAP_ID: &str = "treemap";
 
-/// Outline of the hovered item.
-const HOVER_COLOR: Color = Color::rgb(1.0, 0.93, 0.35);
-/// Outline of the hovered item's folder.
-const FOLDER_COLOR: Color = Color::rgba(1.0, 1.0, 1.0, 0.55);
-/// Outline of the selected item.
-const SELECTED_COLOR: Color = Color::rgb(0.25, 0.85, 1.0);
 /// Hover and selection outline width (logical pixels).
 const OUTLINE: f64 = 2.0;
 /// Folder outline width (logical pixels).
@@ -417,6 +414,13 @@ impl TreemapView {
         index
     }
 
+    /// Outline `r` in `color`, with a `halo` line of the same width just inside it so the
+    /// outline shows on light and dark rectangles alike.
+    fn outline(&self, ctx: &mut dyn DrawCtx, r: PxRect, color: Color, halo: Color, width: f64) {
+        self.stroke(ctx, r, halo, width * 2.0);
+        self.stroke(ctx, r, color, width);
+    }
+
     fn stroke(&self, ctx: &mut dyn DrawCtx, r: PxRect, color: Color, width: f64) {
         let Some(local) = self.rect_to_local(r) else {
             return;
@@ -546,8 +550,9 @@ impl Widget for TreemapView {
     }
 
     fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
+        let colors = map_overlay(ctx.visuals().is_dark());
         if let Some(selected) = self.selected_rect() {
-            self.stroke(ctx, selected, SELECTED_COLOR, OUTLINE);
+            self.outline(ctx, selected, colors.selected, colors.halo, OUTLINE);
         }
         let hover_index = self.shown_hover_index();
         let Some(cache) = &self.cache else {
@@ -564,10 +569,16 @@ impl Widget for TreemapView {
             .map(|p| map.rects()[p].rect);
         let hovered = map.rects().get(index).map(|r| r.rect);
         if let Some(folder) = folder {
-            self.stroke(ctx, folder, FOLDER_COLOR, FOLDER_OUTLINE);
+            self.outline(
+                ctx,
+                folder,
+                colors.folder,
+                colors.folder_halo,
+                FOLDER_OUTLINE,
+            );
         }
         if let Some(hovered) = hovered {
-            self.stroke(ctx, hovered, HOVER_COLOR, OUTLINE);
+            self.outline(ctx, hovered, colors.hover, colors.halo, OUTLINE);
         }
     }
 

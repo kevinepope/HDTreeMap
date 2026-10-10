@@ -95,7 +95,9 @@ fn the_bar_lists_the_menus_and_their_items() {
             "Zoom Out",
             "Zoom to Root",
             "-",
-            "Clear Highlight"
+            "Clear Highlight",
+            "-",
+            "Theme >"
         ]
     );
     assert_eq!(

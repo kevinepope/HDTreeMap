@@ -1,5 +1,5 @@
 //! The main results view: a toolbar (back to the drive list, the zoom breadcrumb, size mode,
-//! cushion shading, Rescan), the three linked views in the middle, and a status bar
+//! cushion shading, Rescan, the light / dark button), the three linked views in the middle, and a status bar
 //! (hovered or selected item, highlighted extension, totals, unreadable items, free space).
 //!
 //! It is shown from the moment a scan starts: while the scan runs, the [`scan_strip`]
@@ -19,7 +19,8 @@
 //! their own `Rebuilder`s keyed on the finer `AppState` versions (`state/view.rs`): the
 //! breadcrumb on the map version, the item and highlight lines on the detail version, the
 //! totals on the tree version. The treemap, tree and legend widgets persist and follow the
-//! state themselves.
+//! state themselves. The parts built with a theme colour (the status bar, the theme button;
+//! the scan strip on its own) rebuild on `AppState::theme_version`.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -49,6 +50,8 @@ use crate::state::{AppState, ScanTarget};
 pub const MAIN_VIEW_ID: &str = "main-view";
 /// Widget id of the back-to-drives button.
 pub const BACK_ID: &str = "main-back";
+/// Widget id of the toolbar's light / dark theme button.
+pub const THEME_BUTTON_ID: &str = "main-theme";
 /// Widget id of the Rescan button.
 pub const RESCAN_ID: &str = "main-rescan";
 /// Widget id of the size-mode switch.
@@ -91,8 +94,38 @@ pub fn build(commands: &Commands, target: &ScanTarget, fonts: &Fonts) -> Box<dyn
             .add(toolbar(state, platform, target, fonts))
             .add(scan_strip::build(state, target, fonts))
             .add_flex(build_centre(state, fonts), 1.0)
-            .add(status_bar(state, platform, target, fonts))
+            .add(themed(state, {
+                let (state, platform) = (state.clone(), Rc::clone(platform));
+                let (target, fonts) = (target.clone(), fonts.clone());
+                move || status_bar(&state, &platform, &target, &fonts)
+            }))
             .with_name(MAIN_VIEW_ID),
+    )
+}
+
+/// `build`, rebuilt whenever the look changes (for parts built with a theme colour).
+fn themed(state: &AppState, build: impl Fn() -> Box<dyn Widget> + 'static) -> Box<dyn Widget> {
+    let key = state.clone();
+    Box::new(Rebuilder::new(move || key.theme_version(), build).with_h_anchor(HAnchor::STRETCH))
+}
+
+/// The toolbar's sun / moon button: flips between the light and dark themes, showing the
+/// look it switches to.
+fn theme_button(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
+    let (icon, tip) = if state.is_dark() {
+        (fa::SUN_O, "Switch to the light theme")
+    } else {
+        (fa::MOON_O, "Switch to the dark theme")
+    };
+    let toggle_state = state.clone();
+    Box::new(
+        Button::new("", Arc::clone(&fonts.ui))
+            .with_icon(icon, Arc::clone(&fonts.icons))
+            .with_focus_on_click(false)
+            .on_click(move || toggle_state.toggle_theme())
+            .with_tooltip(tip)
+            .with_v_anchor(VAnchor::CENTER)
+            .with_name(THEME_BUTTON_ID),
     )
 }
 
@@ -164,6 +197,13 @@ fn toolbar(
         .with_v_anchor(VAnchor::CENTER)
         .with_name(RESCAN_ID);
 
+    let (key, button_state, button_fonts) = (state.clone(), state.clone(), fonts.clone());
+    let theme_rebuilder = Rebuilder::new(
+        move || key.theme_version(),
+        move || theme_button(&button_state, &button_fonts),
+    )
+    .with_v_anchor(VAnchor::CENTER);
+
     Box::new(
         FlexRow::new()
             .with_gap(10.0)
@@ -172,7 +212,8 @@ fn toolbar(
             .add(Box::new(back))
             .add_flex(Box::new(crumbs), 1.0)
             .add(Box::new(view_controls))
-            .add(Box::new(rescan)),
+            .add(Box::new(rescan))
+            .add(Box::new(theme_rebuilder)),
     )
 }
 

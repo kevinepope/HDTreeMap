@@ -15,6 +15,7 @@ use crate::model::{NodeId, SizeMode};
 use crate::platform::{ActionOutcome, PlatformServices};
 use crate::render::{ColorBy, Shading};
 use crate::state::{AppState, ScanTarget, Screen};
+use crate::theme::Theme;
 
 /// The project's home page (Help ▸ View on GitHub, the About sheet).
 pub const GITHUB_URL: &str = "https://github.com/larsbrubaker/HDTreeMap";
@@ -50,6 +51,8 @@ pub enum Command {
     ZoomRoot,
     /// View ▸ Clear Highlight.
     ClearHighlight,
+    /// View ▸ Theme ▸ Light, Dark or Match System.
+    Theme(Theme),
     /// Help ▸ About HDTreeMap.
     About,
     /// Help ▸ View on GitHub.
@@ -76,6 +79,7 @@ impl Command {
             Command::ZoomOut => "view.zoom-out".into(),
             Command::ZoomRoot => "view.zoom-root".into(),
             Command::ClearHighlight => "view.clear-highlight".into(),
+            Command::Theme(theme) => format!("view.theme.{}", theme.key()),
             Command::About => "help.about".into(),
             Command::ViewOnGitHub => "help.github".into(),
         }
@@ -85,6 +89,9 @@ impl Command {
     pub fn from_id(id: &str) -> Option<Self> {
         if let Some(n) = id.strip_prefix("file.scan.") {
             return n.parse().ok().map(Command::ScanVolume);
+        }
+        if let Some(key) = id.strip_prefix("view.theme.") {
+            return Theme::from_key(key).map(Command::Theme);
         }
         [
             Command::OpenFolder,
@@ -197,17 +204,18 @@ impl Commands {
             Command::ZoomIn => self.zoom_in_target().is_some(),
             Command::ZoomOut | Command::ZoomRoot => self.zoomed_in(),
             Command::ClearHighlight => self.has_map() && self.state.highlight_ext().is_some(),
-            Command::About | Command::ViewOnGitHub => true,
+            Command::About | Command::ViewOnGitHub | Command::Theme(_) => true,
         }
     }
 
     /// The check or radio mark of `command`: `Some(on)` for the size modes, the colour
-    /// schemes and cushion shading, `None` for plain commands.
+    /// schemes, the themes and cushion shading, `None` for plain commands.
     pub fn checked(&self, command: Command) -> Option<bool> {
         match command {
             Command::SizeMode(mode) => Some(self.state.size_mode() == mode),
             Command::ToggleCushions => Some(self.state.shading() == Shading::Cushion),
             Command::ColorBy(by) => Some(self.state.color_by() == by),
+            Command::Theme(theme) => Some(self.state.theme() == theme),
             _ => None,
         }
     }
@@ -256,6 +264,7 @@ impl Commands {
                 state.set_zoom_root(NodeId(0));
             }
             Command::ClearHighlight => state.set_highlight_ext(None),
+            Command::Theme(theme) => state.set_theme(theme),
             Command::About => state.show_about(),
             Command::ViewOnGitHub => match self.platform.open_url(GITHUB_URL) {
                 Ok(ActionOutcome::Done) => {}

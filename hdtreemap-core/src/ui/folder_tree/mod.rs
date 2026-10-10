@@ -22,6 +22,9 @@
 //! selection are closed again, and their rows dropped (`remove_children`), when the next
 //! one is shown elsewhere. Folders the user opened are left alone.
 //!
+//! The row icons take the look's colours; a theme switch recolours them in place
+//! (`AppState::theme_version`), keeping what is open, selected and scrolled.
+//!
 //! The root row is labelled with the drive's name or the scanned folder's own name
 //! ([`rows::root_label`]); its `TreeView` node tooltip is the full path.
 //!
@@ -75,6 +78,8 @@ pub struct FolderTree {
     rows: Rows,
     /// Tree version the rows were built for.
     built_for: Option<u64>,
+    /// Theme version the row icons are coloured for.
+    themed_for: Option<u64>,
     /// Zoom root whose path was last opened.
     zoom_synced: Option<NodeId>,
     /// The `AppState` selection the tree shows.
@@ -111,6 +116,7 @@ impl FolderTree {
             state: state.clone(),
             rows: Rows::default(),
             built_for: None,
+            themed_for: None,
             zoom_synced: None,
             selection_synced: None,
             scroll_to_selection: true,
@@ -231,6 +237,18 @@ impl FolderTree {
         };
         self.rows = rows;
         out
+    }
+
+    /// Recolour the row icons when the look changed (the rows themselves stay).
+    fn sync_theme(&mut self) {
+        let version = self.state.theme_version();
+        if self.themed_for == Some(version) {
+            return;
+        }
+        self.themed_for = Some(version);
+        if let Some(view) = self.view_mut() {
+            rows::recolor(&mut view.nodes);
+        }
     }
 
     /// Rebuild the rows when the tree changed (a new scan, size mode or edit).
@@ -544,6 +562,7 @@ impl Widget for FolderTree {
         let size = Size::new(available.width.max(0.0), available.height.max(0.0));
         self.bounds = Rect::new(0.0, 0.0, size.width, size.height);
         self.sync_tree();
+        self.sync_theme();
         self.pull_from_view();
         self.push_from_state();
         let local = Rect::new(0.0, 0.0, size.width, size.height);

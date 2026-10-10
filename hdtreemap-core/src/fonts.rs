@@ -67,6 +67,10 @@ pub mod fa {
     pub const ERASER: char = '\u{f12d}';
     /// fa-history: the start screen's recent scans.
     pub const HISTORY: char = '\u{f1da}';
+    /// fa-sun-o — switch to the light theme.
+    pub const SUN_O: char = '\u{f185}';
+    /// fa-moon-o — switch to the dark theme.
+    pub const MOON_O: char = '\u{f186}';
 }
 
 /// The faces the widgets draw with.
@@ -125,6 +129,8 @@ mod tests {
             fa::POWER_OFF,
             fa::GITHUB,
             fa::ERASER,
+            fa::SUN_O,
+            fa::MOON_O,
         ] {
             assert!(
                 fonts.icons.has_glyph(icon),

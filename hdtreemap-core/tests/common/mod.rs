@@ -141,6 +141,24 @@ impl Harness {
         self.app.paint(&mut ctx);
     }
 
+    /// Lay out and paint one frame, returning its pixels: RGBA, top row first.
+    pub fn snapshot(&mut self) -> Vec<u8> {
+        agg_gui::ui_thread::invoke_pending_actions();
+        self.app.layout(self.size);
+        let mut fb = Framebuffer::new(self.size.width as u32, self.size.height as u32);
+        let mut ctx = GfxCtx::new(&mut fb);
+        self.app.paint(&mut ctx);
+        drop(ctx);
+        fb.pixels_flipped()
+    }
+
+    /// The colour at `(x, y)` (Y-down) of a fresh frame, as `[r, g, b]` in 0..=1.
+    pub fn pixel(&mut self, x: f64, y: f64) -> [f32; 3] {
+        let pixels = self.snapshot();
+        let i = (y as usize * self.size.width as usize + x as usize) * 4;
+        [0, 1, 2].map(|c| f32::from(pixels[i + c]) / 255.0)
+    }
+
     /// Run frames until `done` holds (at most `max` frames). Returns whether it did.
     pub fn frames_until(&mut self, max: usize, mut done: impl FnMut(&Self) -> bool) -> bool {
         for _ in 0..max {

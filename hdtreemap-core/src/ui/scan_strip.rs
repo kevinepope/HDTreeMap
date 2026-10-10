@@ -48,7 +48,8 @@ pub fn build(state: &AppState, target: &ScanTarget, fonts: &Fonts) -> Box<dyn Wi
     let strip_fonts = fonts.clone();
     Box::new(
         Rebuilder::new(
-            move || u64::from(key_state.is_scanning()),
+            // Rebuilt when the scan ends, and with a new look (its tint is the theme's).
+            move || u64::from(key_state.is_scanning()) | key_state.theme_version() << 1,
             move || {
                 if strip_state.is_scanning() {
                     strip(&strip_state, &strip_target, &strip_fonts)

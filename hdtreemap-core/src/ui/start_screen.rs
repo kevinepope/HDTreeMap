@@ -4,6 +4,8 @@
 //! the list either "Choose Folder…" (native) or, on the browser demo, a note that the
 //! drives are simulated plus a banner at the top.
 //!
+//! It is built with the theme's colours and rebuilt (by `ui/mod.rs`) when the look changes.
+//!
 //! Picking a volume or a folder starts a scan of it (the platform's `scan_source`) through
 //! `AppState::start_scan`; the root `Rebuilder` (`ui/mod.rs`) then shows the scan screen.
 
@@ -11,8 +13,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    current_visuals, Button, Clickable, Color, Container, EllipsisMode, FlexColumn, FlexRow,
-    HAnchor, Insets, Label, ProgressBar, ScrollView, Size, Spacer, VAnchor, Widget,
+    current_visuals, Button, Clickable, Container, EllipsisMode, FlexColumn, FlexRow, HAnchor,
+    Insets, Label, ProgressBar, ScrollView, Size, Spacer, VAnchor, Widget,
 };
 
 use crate::fonts::{fa, Fonts};
@@ -316,7 +318,7 @@ fn build_volume_card(
     }
     let mut bar = ProgressBar::new(fraction, Arc::clone(&fonts.ui)).with_h_anchor(HAnchor::STRETCH);
     if fraction >= NEARLY_FULL {
-        bar = bar.with_fill_color(Color::rgb(0.86, 0.30, 0.27));
+        bar = bar.with_fill_color(visuals.error_color());
     }
     details = details
         .add(Box::new(
