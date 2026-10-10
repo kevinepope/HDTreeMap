@@ -254,10 +254,12 @@ mod tests {
             "{dashed:?}"
         );
         let here = std::env::current_dir().expect("cwd");
-        assert_eq!(
-            resolve_root(Path::new(".")),
-            std::fs::canonicalize(&here).expect("canonical cwd")
-        );
+        let canonical = std::fs::canonicalize(&here).expect("canonical cwd");
+        let plain = canonical
+            .to_str()
+            .and_then(strip_verbatim)
+            .map_or(canonical.clone(), PathBuf::from);
+        assert_eq!(resolve_root(Path::new(".")), plain);
     }
 
     #[test]

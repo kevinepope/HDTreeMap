@@ -22,6 +22,18 @@ fn write(path: &Path, len: usize) {
     fs::write(path, vec![b'x'; len]).expect("write file");
 }
 
+/// `path` canonicalised the way the scanner names its root: on Windows without the `\\?\`
+/// prefix `fs::canonicalize` adds to drive paths.
+fn canonical(path: impl AsRef<Path>) -> std::io::Result<std::path::PathBuf> {
+    let c = fs::canonicalize(path)?;
+    let plain = c
+        .to_str()
+        .and_then(|s| s.strip_prefix(r"\\?\"))
+        .filter(|rest| rest.as_bytes().get(1) == Some(&b':'))
+        .map(std::path::PathBuf::from);
+    Ok(plain.unwrap_or(c))
+}
+
 fn scan(root: &Path) -> (ScanResult, Arc<ScanProgress>) {
     let progress = Arc::new(ScanProgress::new());
     let result = scan_blocking(root, &progress, None);
@@ -59,7 +71,7 @@ fn sizes_counts_and_extensions_match_the_disk() {
     assert_eq!(tree.dir_count(), 3);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     // The root is canonical (on macOS the temp dir under /var is really under /private/var).
-    let root = fs::canonicalize(dir.path()).expect("canonical");
+    let root = canonical(dir.path()).expect("canonical");
     assert_eq!(result.root, root);
     assert_eq!(tree.path(tree.root()), root);
 
@@ -153,8 +165,8 @@ fn a_file_root_has_correct_paths() {
     let path = tree.path(child);
     assert_eq!(path, tree.path(tree.root()).join("movie.mkv"));
     assert_eq!(
-        fs::canonicalize(&path).expect("the path exists"),
-        fs::canonicalize(&file).expect("canonical")
+        canonical(&path).expect("the path exists"),
+        canonical(&file).expect("canonical")
     );
 }
 
@@ -165,7 +177,7 @@ fn the_root_is_made_absolute_and_canonical() {
     // A path with `..` in it names the scan by where it really is.
     let roundabout = dir.path().join("docs").join("..");
     let (result, _) = scan(&roundabout);
-    let canonical = fs::canonicalize(dir.path()).expect("canonical");
+    let canonical = canonical(dir.path()).expect("canonical");
     assert_eq!(result.root, canonical);
     assert_eq!(result.tree.path(result.tree.root()), canonical);
     assert_eq!(result.tree.file_count(), 4);
@@ -235,7 +247,7 @@ mod unix {
         sample_tree(&dir.path().join("real"));
         symlink(dir.path().join("real"), dir.path().join("alias")).expect("dir symlink");
         let (result, _) = scan(&dir.path().join("alias"));
-        let canonical = fs::canonicalize(dir.path().join("real")).expect("canonical");
+        let canonical = canonical(dir.path().join("real")).expect("canonical");
         assert_eq!(result.tree.path(result.tree.root()), canonical);
         assert_eq!(result.tree.file_count(), 4);
     }
@@ -259,7 +271,7 @@ mod unix {
             "the file's size, not the link's"
         );
         let file = tree.children(tree.root()).next().expect("the file");
-        let real = fs::canonicalize(dir.path().join("data/real.bin")).expect("canonical");
+        let real = canonical(dir.path().join("data/real.bin")).expect("canonical");
         assert_eq!(tree.path(file), real);
     }
 
@@ -293,9 +305,7 @@ mod unix {
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod back");
 
         assert_eq!(result.errors.total(), 1, "{:?}", result.errors);
-        let canonical = fs::canonicalize(dir.path())
-            .expect("canonical")
-            .join("locked");
+        let canonical = canonical(dir.path()).expect("canonical").join("locked");
         assert_eq!(result.errors.entries()[0].path, canonical);
         assert_eq!(progress.snapshot().errors, 1);
         let node = find(&result.tree, "locked").expect("locked listed");
