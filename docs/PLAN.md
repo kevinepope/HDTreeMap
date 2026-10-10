@@ -207,6 +207,22 @@ the two lists read as one sidebar.
   - Native shell (GPU), `HDTREEMAP_STATS`, archive server with `.jpg` highlighted, about
     1720×1440 px map: 1.25 ms average CPU layout+paint per frame.
 
+*As built (M4):* the root is a `Stack`: the menu bar (unless the shell installed the
+macOS system one) over the screen, then the overlays: a `ContextMenuHost` that opens an
+agg-gui `PopupMenu` for `AppState::request_context_menu` (from the map and the tree), the
+toasts (agg-gui has none; `ui/toast.rs` paints them), and the Move to Trash and About
+`ModalSheet`s. The menus are described once as data (`ui/menus.rs`) and turned into the
+in-window `MenuBar`, the macOS `MenuBarModel` (in `hdtreemap-native`) and the shortcut
+table; `ui/commands.rs` runs, enables and checks every command, `ui/node_actions.rs`
+the per-item ones. Move to Trash calls `PlatformServices::trash`, then
+`AppState::remove_node`; Rescan Folder runs a `ScanSource` for the folder in the
+background (the demo regenerates the whole drive) and `Tree::replace_subtree` splices it
+in. Items whose stored name is lossy (`NodeFlags::LOSSY_NAME`) are refused by Reveal,
+Open, Rescan and Trash. The folder tree runs on agg-gui's TreeView events and selection
+API; folders it opened for an earlier selection are closed and their rows dropped when
+the next one is shown. Measured (`bench_views`, archive server, software renderer):
+idle 6.5 ms, hover 6.8 ms, select on the map 8.7 ms (was 12.4 ms).
+
 ### 3.6 Platform services (native crate)
 
 | Service | macOS | Windows | Linux |
@@ -216,6 +232,16 @@ the two lists read as one sidebar.
 | Open | `opener` crate | `opener` crate | `opener` crate |
 | Trash | `trash` crate | `trash` crate | `trash` crate |
 | Volumes | `sysinfo::Disks` (filtering out pseudo-filesystems on Linux) | `sysinfo::Disks` | `sysinfo::Disks` |
+| Open URL | `opener::open_browser` | same | same |
+
+*As built (M4):* the scan root is canonicalised first. Linux decides mount handling from
+`/proc/self/mountinfo` (`platform/mountinfo.rs`): mounts of other filesystems and mounts
+repeating folders the scan reaches anyway (bind mounts) are skipped, btrfs subvolumes of
+the root's filesystem entered; the volume list merges only mounts of the same root. macOS
+`/` skips only the firmlinked folders of `/System/Volumes/Data` (`/usr/share/firmlinks`).
+Windows: `\\?\` prefix for long paths in `GetCompressedFileSizeW`, `explorer
+/select,"<path>"` as a raw argument; hard links are not de-duplicated (that needs a handle
+per file; see the README's known limitations). APFS clones are counted at each copy.
 
 ## 4. Milestones
 
@@ -225,7 +251,7 @@ Each milestone ends green: fmt, clippy `-D warnings` and tests.
 2. **M1 – Scanner + model** *(done)*: jwalk scan into the arena, both size modes, inode dedup, filesystem boundaries, cancel, and error collection. Tests use temporary directory trees (including hard links and symlinks, on Unix). Includes a CLI-ish `--dump-top N` debug flag for checking the scanner without the UI.
 3. **M2 – Treemap** *(done)*: squarify, cushion rasteriser, `TreemapView` with hover and status bar, progress screen, and zoom in and out with the breadcrumb. Unit tests for layout invariants and a golden-image test for the rasteriser.
 4. **M3 – Linked views** *(done)*: folder tree and extension legend, all synced with the map selection, plus highlight-by-extension.
-5. **M4 – Actions**: context menu, reveal, open, copy path, rescan folder, Move to Trash with confirmation, and the menu bar items.
+5. **M4 – Actions** *(done)*: context menu, reveal, open, copy path, rescan folder, Move to Trash with confirmation, and the menu bar items.
 6. **M5 – Polish and perf**: measure on a real full-disk scan of each OS, **live map during the scan**, remembered window bounds and settings, and the colour-by-top-folder mode.
 7. **M6 – Ship**: README with a hero screenshot, a GitHub release workflow (zipped binaries for all three OSes, a macOS `.app` via `cargo-bundle`), and the rust-apps README entry and submodule.
 

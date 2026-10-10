@@ -10,10 +10,11 @@ against simulated drives. It never reads anything on your computer.
 
 ## Status
 
-Early development. Milestones M0–M3 are done: pick a drive or folder, watch the parallel
-scan, then explore the result as a cushion treemap linked to a folder tree and an
-extension legend. Actions (reveal, open, Move to Trash) come next. See
-[docs/PLAN.md](docs/PLAN.md) for the full plan.
+Early development. Milestones M0–M4 are done: pick a drive or folder, watch the parallel
+scan, explore the result as a cushion treemap linked to a folder tree and an extension
+legend, and act on what you find (reveal, open, copy the path, rescan a folder, Move to
+Trash). Polish and performance come next. See [docs/PLAN.md](docs/PLAN.md) for the full
+plan.
 
 ## Features
 
@@ -30,11 +31,15 @@ extension legend. Actions (reveal, open, Move to Trash) come next. See
   current folder. Click an extension to highlight its files on the map.
 - "Size on disk" or apparent size, switchable without rescanning.
 - Status bar with totals, unreadable items and free space.
-
-## Planned features
-
-- Reveal in Finder / Explorer / file manager, Open, Copy Path, Rescan, and Move to Trash
-  (with confirmation; never a permanent delete).
+- Right-click any file or folder (on the map or in the tree): Reveal in Finder / Show in
+  Explorer / Show in File Manager, Open, Copy Path, Zoom Here, Zoom to Parent, Rescan
+  Folder (in the background, spliced into the map) and Move to Trash… (confirmed first;
+  never a permanent delete; the map, tree, legend and totals update).
+- A menu bar (the system menu on macOS) with File, Edit, View and Help, and shortcuts:
+  Cmd/Ctrl+O open a folder, Cmd/Ctrl+R rescan, Cmd/Ctrl+C copy the path,
+  Cmd+Backspace (macOS) or Delete to move to the trash, Cmd/Ctrl+Up / Down to zoom out /
+  in, Esc to clear the highlight or selection.
+- Short notices in the corner of the map report what an action did.
 
 ## Known limitations
 
@@ -44,6 +49,9 @@ extension legend. Actions (reveal, open, Move to Trash) come next. See
   opening every file during the scan to find the few with more than one link would slow
   it down a lot, so a multiply-linked file (rare outside the WinSxS component store) is
   counted at each of its paths.
+- **APFS clones are counted at each copy.** macOS can clone a file so two copies share
+  their blocks until one changes; the scanner sees two files and counts the space twice
+  (a folder of cloned apps can make a scan of `/` exceed the disk's used space).
 - Names that are not valid Unicode are shown with replacement characters. Reveal, Open
   and Move to Trash refuse such items (and everything inside them), because the shown
   path is not the real one; use your file manager for them.

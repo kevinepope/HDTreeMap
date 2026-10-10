@@ -29,25 +29,42 @@ app genuinely needs one (the treemap view).
 
 ```
 hdtreemap-core/     rlib: everything testable, no platform code
-  src/fonts.rs        theme + fonts, Font Awesome code points
+  src/fonts.rs        theme + fonts, Font Awesome code points (fa::*)
   src/format.rs       human-readable sizes
-  src/platform.rs     PlatformServices trait, VolumeInfo, volume-list cleanup
+  src/platform.rs     PlatformServices trait (volumes, picker, reveal/open/trash, open_url,
+                      scan_source), VolumeInfo, volume-list cleanup (dedupe by VolumeKey)
   src/platform/demo.rs  DemoPlatform: the web demo's simulated drives
-  src/model/          arena Tree (40-byte Node), TreeBuilder, SizeMode, ExtTable
-  src/scan/           ScanSource, ScanProgress, FsScanner (native: jwalk on a worker thread)
+  src/platform/mountinfo.rs  Linux /proc/self/mountinfo: parse, mounts to skip (pure)
+  src/model/          arena Tree (40-byte Node, LOSSY_NAME flag, exact_path), TreeBuilder
+                      (name-slab limit), SizeMode, ExtTable; splice.rs: replace_subtree
+  src/scan/           ScanSource, ScanProgress/ScanErrors, FsScanner (native: jwalk on a
+                      worker thread); fs_meta.rs: per-OS metadata, root resolution, mounts,
+                      macOS firmlinks
   src/demo_fs/        DemoScanner + per-drive recipes for the simulated drives (all targets)
   src/layout/         squarified cushion layout (Y-down physical pixels), aggregates, hit grid
   src/render/         palette + cushion rasteriser (rayon row bands natively), HDTREEMAP_STATS
   src/state.rs        AppState (screen, running scan, finished result); state/pump.rs polls
-                      the running scan once per frame from an agg-gui ui_thread drain hook;
-                      state/view.rs: zoom root, hover, selection, shading and their versions
-  src/ui/             widgets: start and scan screens, main_view (toolbar, breadcrumb, the
-                      custom TreemapView, status bar); later the folder tree and legend
-  tests/              headless UI tests (common/ harness), scanner tests, file_line_count
-  examples/           bench_treemap: headless layout/raster timing
+                      scans and folder rescans once per frame (an agg-gui ui_thread drain
+                      hook); view.rs: zoom, hover, selection, highlight, shading, versions;
+                      derived.rs: shared palette and zoom-root ExtTable; volumes.rs: cached
+                      volume list; edits.rs: remove_node, folder rescan + splice;
+                      notices.rs: toasts, trash/About sheets, context-menu requests, quit
+  src/ui/             widgets. mod.rs: root Stack (menu bar + screen, overlays);
+                      start_screen, scan_screen, main_view (toolbar, breadcrumb, splitters,
+                      status bar), treemap_view/ (custom TreemapView; geometry.rs raster
+                      size, highlight.rs), folder_tree/ (TreeView wrapper, rows.rs lazy
+                      rows), ext_legend.rs (Table), describe.rs; commands.rs (menu
+                      commands), node_actions.rs (reveal/open/copy/zoom/rescan/trash),
+                      menus.rs (menu spec, in-window MenuBar, shortcuts), context_menu.rs
+                      (PopupMenu host), sheets.rs (trash confirm, About), toast.rs
+  tests/              headless UI tests (common/ harness with a recording FakePlatform),
+                      scanner tests, actions/menus tests, file_line_count
+  examples/           bench_treemap (layout/raster timing), bench_views (whole-frame timing)
 hdtreemap-native/   bin `hdtreemap`: agg-gui-shell + NativePlatform (sysinfo, rfd, opener, trash),
-                    CLI (`--demo [ID]`, `--dump-top N [PATH | --demo ID]`)
-hdtreemap-wasm/     cdylib: agg-gui-web-shell + DemoPlatform (not a default member)
+                    CLI (`--demo [ID]`, `--dump-top N [PATH | --demo ID]`, `--highlight EXT`),
+                    menu_bar.rs (macOS system menu from the core's spec), show.rs
+                    (HDTREEMAP_SCREENSHOT_SHOW input replay), a ShellHost for Quit
+hdtreemap-wasm/     cdylib: agg-gui-web-shell + WebPlatform (DemoPlatform that opens links)
 demo/               static page + bun/vite bundle for GitHub Pages
 ```
 
@@ -58,7 +75,7 @@ Add a module when it holds real code, not before.
 Two seams keep the core free of platform code and let the browser demo run the real app:
 
 - **`PlatformServices`** (`platform.rs`): what the UI needs from the OS — list volumes,
-  pick a folder, reveal, open, trash, `is_demo`, and `scan_source` (which `ScanSource`
+  pick a folder, reveal, open, trash, open a web link, `is_demo`, and `scan_source` (which `ScanSource`
   scans a target). `NativePlatform` (in
   `hdtreemap-native`) talks to the real OS; `DemoPlatform` (in the core, all targets) lists
   descriptive simulated drives and reports actions as simulated. Pure logic that the native
@@ -90,7 +107,10 @@ cargo check -p hdtreemap-wasm --target wasm32-unknown-unknown
 wasm-pack build hdtreemap-wasm --target web --out-dir ../demo/public/pkg --no-typescript
 ```
 
-`HDTREEMAP_SCREENSHOT=out.png cargo run -p hdtreemap-native` captures a frame and exits.
+`HDTREEMAP_SCREENSHOT=out.png cargo run -p hdtreemap-native` captures a frame and exits;
+`HDTREEMAP_SCREENSHOT_SHOW=context-menu|trash|menu|about` opens that UI first (with
+`HDTREEMAP_IN_WINDOW_MENU=1` for the in-window bar on macOS). Never confirm a trash on real
+files while testing: point it at a temporary folder.
 `HDTREEMAP_STATS=1` prints treemap layout / raster times and per-frame layout+paint time.
 `cargo run --release -p hdtreemap-native -- --dump-top 15 PATH` checks the scanner headless.
 Run `scripts/pre-commit-check.sh` (or `.ps1`) before every commit; it mirrors CI.
