@@ -16,7 +16,7 @@
 //! - [`render`] — the treemap's palette and cushion rasteriser.
 //! - [`scan`] — `ScanSource`, live progress, and the native `FsScanner`.
 //! - [`state`] — the shared app state (screen, running scan, finished result) and the scan pump.
-//! - [`ui`] — the widget tree (start, scan and results screens).
+//! - [`ui`] — the widget tree (start and scan screens, the treemap main view).
 
 pub mod demo_fs;
 pub mod fonts;
@@ -44,5 +44,10 @@ pub const APP_TITLE: &str = "HDTreeMap";
 /// [`install_theme_and_fonts`] first.
 pub fn build_app(state: AppState, platform: Rc<dyn PlatformServices>, fonts: Fonts) -> App {
     state::install_scan_pump();
-    App::new(ui::build_root(state, platform, fonts))
+    let root = ui::build_root(state, platform, fonts);
+    if render::stats_enabled() {
+        App::new(Box::new(ui::frame_stats::FrameStats::new(root)))
+    } else {
+        App::new(root)
+    }
 }

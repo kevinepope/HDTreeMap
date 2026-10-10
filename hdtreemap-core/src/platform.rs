@@ -217,6 +217,15 @@ pub fn volume_display_name(label: &str, mount_path: &Path) -> String {
     }
 }
 
+/// The volume holding `path`: the listed volume with the longest mount path that contains
+/// it (the status bar's free space for a folder scan).
+pub fn volume_containing<'a>(volumes: &'a [VolumeInfo], path: &Path) -> Option<&'a VolumeInfo> {
+    volumes
+        .iter()
+        .filter(|v| path.starts_with(&v.mount_path))
+        .max_by_key(|v| v.mount_path.as_os_str().len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,5 +338,19 @@ mod tests {
     fn used_bytes_never_underflows() {
         assert_eq!(volume("/", 10, 4).used_bytes(), 6);
         assert_eq!(volume("/", 10, 40).used_bytes(), 0);
+    }
+
+    #[test]
+    fn a_folder_belongs_to_its_deepest_volume() {
+        let volumes = vec![
+            volume("/", 100, 10),
+            volume("/Volumes/USB", 50, 20),
+            volume("/Volumes/USB2", 70, 30),
+        ];
+        let find = |p: &str| volume_containing(&volumes, Path::new(p)).map(|v| v.free_bytes);
+        assert_eq!(find("/Users/me/Development"), Some(10));
+        assert_eq!(find("/Volumes/USB/photos"), Some(20));
+        assert_eq!(find("/Volumes/USB2"), Some(30));
+        assert_eq!(volume_containing(&[], Path::new("/x")), None);
     }
 }

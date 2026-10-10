@@ -6,11 +6,17 @@
 //! - [`start_screen`] — app title, one clickable card per volume, "Choose Folder…", the
 //!   demo banner.
 //! - [`scan_screen`] — live progress of a running scan, and Cancel.
-//! - [`results_screen`] — totals, largest folders, top file types, Back and Rescan.
+//! - [`main_view`] — the results: toolbar with the [`breadcrumb`], the [`treemap_view`],
+//!   and the status bar (item lines from [`describe`]).
+//! - [`frame_stats`] — whole-frame timing under `HDTREEMAP_STATS`.
 
-pub mod results_screen;
+pub mod breadcrumb;
+pub mod describe;
+pub mod frame_stats;
+pub mod main_view;
 pub mod scan_screen;
 pub mod start_screen;
+pub mod treemap_view;
 
 use std::rc::Rc;
 
@@ -32,7 +38,7 @@ pub fn build_root(
         move || match state.screen() {
             Screen::Start => start_screen::build(&state, &platform, &fonts),
             Screen::Scanning(target) => scan_screen::build(&state, &target, &fonts),
-            Screen::Results(target) => results_screen::build(&state, &platform, &target, &fonts),
+            Screen::Results(target) => main_view::build(&state, &platform, &target, &fonts),
         },
     ))
 }

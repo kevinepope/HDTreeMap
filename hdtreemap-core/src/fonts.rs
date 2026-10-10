@@ -32,6 +32,8 @@ pub mod fa {
     pub const REFRESH: char = '\u{f021}';
     /// fa-exclamation-triangle — unreadable items.
     pub const WARNING: char = '\u{f071}';
+    /// fa-chevron-right — between breadcrumb segments.
+    pub const CHEVRON_RIGHT: char = '\u{f054}';
 }
 
 /// The faces the widgets draw with.
@@ -74,6 +76,7 @@ mod tests {
             fa::TIMES,
             fa::REFRESH,
             fa::WARNING,
+            fa::CHEVRON_RIGHT,
         ] {
             assert!(
                 fonts.icons.has_glyph(icon),

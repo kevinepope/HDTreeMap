@@ -1,0 +1,467 @@
+//! `TreemapView`: the custom widget that shows the finished scan as a cushion treemap
+//! (`docs/PLAN.md` §3.4–3.5), the one widget the app draws itself.
+//!
+//! It keeps the laid-out map ([`TreemapLayout`]) and its raster (`Arc<Vec<u8>>`, physical
+//! pixels, top row first) and draws the raster with `draw_image_rgba_arc`, so agg-gui's
+//! GPU backend keeps the texture while the `Arc` is unchanged. It lays out again only when
+//! the physical size (window size × DPI scale), the zoom root or the tree (new scan, size
+//! mode) changes, and rasterises again only then or when the shading changes. Hover,
+//! selection and the folder outline are vector strokes drawn over the image, so moving the
+//! mouse never re-rasterises.
+//!
+//! Coordinates: agg-gui hands the widget Y-up logical points; the layout and raster are in
+//! Y-down physical pixels. `to_map` / `rect_to_local` convert between the two.
+//!
+//! Input: hover updates `AppState::hovered` (the status bar shows it) and the tooltip;
+//! a click selects; a double click zooms into the folder (or a file's folder); Backspace or
+//! the mouse back button zooms out; Escape clears the selection.
+
+use std::sync::Arc;
+
+use web_time::Instant;
+
+use agg_gui::event::current_click_count;
+use agg_gui::ux_scale::effective_scale;
+use agg_gui::{
+    Color, DrawCtx, Event, EventResult, HAnchor, Key, Modifiers, MouseButton, Point, Rect, Size,
+    VAnchor, Widget, WidgetBase,
+};
+
+use super::describe;
+use crate::layout::{layout, LayoutParams, PxRect, RectKind, TreemapLayout};
+use crate::model::NodeId;
+use crate::render::{rasterise, stats_enabled, Palette, Shading};
+use crate::state::{AppState, Hover};
+
+/// Widget id of the treemap.
+pub const TREEMAP_ID: &str = "treemap";
+
+/// Outline of the hovered item.
+const HOVER_COLOR: Color = Color::rgb(1.0, 0.93, 0.35);
+/// Outline of the hovered item's folder.
+const FOLDER_COLOR: Color = Color::rgba(1.0, 1.0, 1.0, 0.55);
+/// Outline of the selected item.
+const SELECTED_COLOR: Color = Color::rgb(0.25, 0.85, 1.0);
+/// Hover and selection outline width (logical pixels).
+const OUTLINE: f64 = 2.0;
+/// Folder outline width (logical pixels).
+const FOLDER_OUTLINE: f64 = 1.0;
+/// Mouse button agg-gui's shells report for the "back" side button.
+const BACK_BUTTON: MouseButton = MouseButton::Other(3);
+
+/// What a layout depends on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LayoutKey {
+    width: u32,
+    height: u32,
+    zoom_root: NodeId,
+    tree_version: u64,
+}
+
+/// The current map: layout, colours and raster.
+struct MapCache {
+    key: LayoutKey,
+    shading: Shading,
+    layout: TreemapLayout,
+    palette: Palette,
+    pixels: Arc<Vec<u8>>,
+}
+
+/// The treemap widget. See the module docs.
+pub struct TreemapView {
+    bounds: Rect,
+    children: Vec<Box<dyn Widget>>,
+    base: WidgetBase,
+    state: AppState,
+    params: LayoutParams,
+    cache: Option<MapCache>,
+    /// Painted rectangle under the pointer.
+    hover_index: Option<usize>,
+    /// Where the pointer last was (local, Y-up), to re-hit-test after a re-layout.
+    pointer: Option<Point>,
+    /// `(node, rectangle)` of the selection in the current layout.
+    selected_index: Option<(NodeId, Option<usize>)>,
+}
+
+impl TreemapView {
+    pub fn new(state: &AppState) -> Self {
+        Self {
+            bounds: Rect::default(),
+            children: Vec::new(),
+            base: WidgetBase::new()
+                .with_h_anchor(HAnchor::STRETCH)
+                .with_v_anchor(VAnchor::STRETCH),
+            state: state.clone(),
+            params: LayoutParams::default(),
+            cache: None,
+            hover_index: None,
+            pointer: None,
+            selected_index: None,
+        }
+    }
+
+    /// Bring the layout and raster up to date for the current size and state.
+    fn refresh(&mut self, scale: f64) {
+        let width = physical(self.bounds.width, scale);
+        let height = physical(self.bounds.height, scale);
+        let key = LayoutKey {
+            width,
+            height,
+            zoom_root: self.state.zoom_root(),
+            tree_version: self.state.tree_version(),
+        };
+        let shading = self.state.shading();
+        let fresh_layout = self.cache.as_ref().is_some_and(|c| c.key == key);
+        if fresh_layout && self.cache.as_ref().is_some_and(|c| c.shading == shading) {
+            return;
+        }
+        if width == 0 || height == 0 {
+            self.drop_map();
+            return;
+        }
+        let previous = self.cache.take();
+        let state = self.state.clone();
+        let params = self.params;
+        let next = state.with_result(|result, extensions| {
+            let tree = &result.tree;
+            let (map, palette) = match previous {
+                Some(c) if fresh_layout => (c.layout, c.palette),
+                _ => {
+                    let started = Instant::now();
+                    let bounds = PxRect::new(0.0, 0.0, f64::from(width), f64::from(height));
+                    let map = layout(tree, key.zoom_root, bounds, &params);
+                    let palette =
+                        Palette::from_extensions(extensions, tree.size_mode(), tree.ext_count());
+                    state.count_layout();
+                    if stats_enabled() {
+                        eprintln!(
+                            "hdtreemap stats: layout {:.1} ms | {width}x{height} | {} rects, {} painted",
+                            ms(started),
+                            map.rects().len(),
+                            map.painted_count()
+                        );
+                    }
+                    (map, palette)
+                }
+            };
+            let started = Instant::now();
+            let pixels = rasterise(&map, tree, &palette, shading, width, height);
+            state.count_raster();
+            if stats_enabled() {
+                eprintln!(
+                    "hdtreemap stats: raster {:.1} ms | {width}x{height} | {shading:?}",
+                    ms(started)
+                );
+            }
+            MapCache {
+                key,
+                shading,
+                layout: map,
+                palette,
+                pixels: Arc::new(pixels),
+            }
+        });
+        let relaid = !fresh_layout;
+        self.cache = next;
+        if relaid {
+            self.selected_index = None;
+            self.rehover();
+        }
+    }
+
+    fn drop_map(&mut self) {
+        self.cache = None;
+        self.hover_index = None;
+        self.selected_index = None;
+    }
+
+    /// Hit-test the last pointer position again (the map under it changed).
+    fn rehover(&mut self) {
+        self.hover_index = None;
+        match self.pointer {
+            Some(pos) => self.hover_at(pos),
+            None => self.state.set_hovered(None),
+        }
+    }
+
+    /// A local (Y-up, logical) point in map pixels (Y-down, physical).
+    fn to_map(&self, pos: Point) -> Option<(f64, f64)> {
+        let cache = self.cache.as_ref()?;
+        let scale = effective_scale();
+        Some((pos.x * scale, f64::from(cache.key.height) - pos.y * scale))
+    }
+
+    /// A map rectangle as a local (Y-up, logical) rectangle.
+    fn rect_to_local(&self, r: PxRect) -> Option<Rect> {
+        let cache = self.cache.as_ref()?;
+        let scale = effective_scale();
+        let top = f64::from(cache.key.height) - r.bottom();
+        Some(Rect::new(
+            r.x / scale,
+            top / scale,
+            r.w / scale,
+            r.h / scale,
+        ))
+    }
+
+    /// Update the hover from a pointer at `pos` (local, Y-up).
+    fn hover_at(&mut self, pos: Point) {
+        self.pointer = Some(pos);
+        let index = self
+            .to_map(pos)
+            .and_then(|(x, y)| self.cache.as_ref()?.layout.hit(x, y));
+        if index == self.hover_index {
+            return;
+        }
+        self.hover_index = index;
+        let hover = index.and_then(|i| self.hover_for(i));
+        let tooltip = hover.and_then(|h| {
+            self.state
+                .with_result(|r, _| describe::tooltip(&r.tree, self.state.zoom_root(), h))
+        });
+        self.base.tooltip = tooltip;
+        self.state.set_hovered(hover);
+        agg_gui::animation::request_draw();
+    }
+
+    fn clear_hover(&mut self) {
+        self.pointer = None;
+        if self.hover_index.take().is_some() || self.state.hovered().is_some() {
+            self.base.tooltip = None;
+            self.state.set_hovered(None);
+            agg_gui::animation::request_draw();
+        }
+    }
+
+    /// What painted rectangle `index` stands for.
+    fn hover_for(&self, index: usize) -> Option<Hover> {
+        let map = &self.cache.as_ref()?.layout;
+        let r = map.rects().get(index)?;
+        Some(Hover {
+            node: r.node,
+            aggregate: map.aggregate(index),
+        })
+    }
+
+    /// The folder a double click on painted rectangle `index` zooms into.
+    fn zoom_target(&self, index: usize) -> Option<NodeId> {
+        let map = &self.cache.as_ref()?.layout;
+        let r = map.rects().get(index)?;
+        match r.kind {
+            RectKind::File => map.ancestors(index).next().map(|p| map.rects()[p].node),
+            RectKind::Dir | RectKind::FolderBlock | RectKind::Aggregate => Some(r.node),
+        }
+    }
+
+    fn press(&mut self, pos: Point) {
+        self.hover_at(pos);
+        let Some(index) = self.hover_index else {
+            self.state.set_selected(None);
+            return;
+        };
+        if current_click_count() >= 2 {
+            if let Some(target) = self.zoom_target(index) {
+                self.state.set_zoom_root(target);
+            }
+            return;
+        }
+        let node = self.hover_for(index).map(|h| h.node);
+        self.state.set_selected(node);
+        agg_gui::animation::request_draw();
+    }
+
+    /// The selection's rectangle in the current layout (looked up once per change).
+    fn selected_rect(&mut self) -> Option<PxRect> {
+        let selected = self.state.selected()?;
+        let map = &self.cache.as_ref()?.layout;
+        let index = match self.selected_index {
+            Some((node, index)) if node == selected => index,
+            _ => {
+                let index = map.index_of(selected);
+                self.selected_index = Some((selected, index));
+                index
+            }
+        };
+        index.and_then(|i| map.rects().get(i)).map(|r| r.rect)
+    }
+
+    fn stroke(&self, ctx: &mut dyn DrawCtx, r: PxRect, color: Color, width: f64) {
+        let Some(local) = self.rect_to_local(r) else {
+            return;
+        };
+        // Keep the line inside the rectangle when it fits.
+        let inset = if local.width > width * 2.0 && local.height > width * 2.0 {
+            width / 2.0
+        } else {
+            0.0
+        };
+        ctx.begin_path();
+        ctx.rect(
+            local.x + inset,
+            local.y + inset,
+            (local.width - 2.0 * inset).max(0.0),
+            (local.height - 2.0 * inset).max(0.0),
+        );
+        ctx.set_stroke_color(color);
+        ctx.set_line_width(width);
+        ctx.stroke();
+    }
+}
+
+/// Logical length → whole physical pixels.
+fn physical(len: f64, scale: f64) -> u32 {
+    let px = (len * scale).round();
+    if px.is_finite() && px > 0.0 {
+        px.min(f64::from(u16::MAX)) as u32
+    } else {
+        0
+    }
+}
+
+fn ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
+}
+
+impl Widget for TreemapView {
+    fn type_name(&self) -> &'static str {
+        "TreemapView"
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
+    fn set_bounds(&mut self, bounds: Rect) {
+        self.bounds = bounds;
+    }
+
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &self.children
+    }
+
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
+        &mut self.children
+    }
+
+    fn widget_base(&self) -> Option<&WidgetBase> {
+        Some(&self.base)
+    }
+
+    fn widget_base_mut(&mut self) -> Option<&mut WidgetBase> {
+        Some(&mut self.base)
+    }
+
+    fn h_anchor(&self) -> HAnchor {
+        self.base.h_anchor
+    }
+
+    fn v_anchor(&self) -> VAnchor {
+        self.base.v_anchor
+    }
+
+    fn layout(&mut self, available: Size) -> Size {
+        let size = Size::new(available.width.max(0.0), available.height.max(0.0));
+        self.bounds = Rect::new(0.0, 0.0, size.width, size.height);
+        size
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let scale = effective_scale();
+        self.refresh(scale);
+        let Some(cache) = &self.cache else {
+            return;
+        };
+        let (w, h) = (cache.key.width, cache.key.height);
+        ctx.draw_image_rgba_arc(
+            &cache.pixels,
+            w,
+            h,
+            0.0,
+            0.0,
+            f64::from(w) / scale,
+            f64::from(h) / scale,
+        );
+    }
+
+    fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
+        if let Some(selected) = self.selected_rect() {
+            self.stroke(ctx, selected, SELECTED_COLOR, OUTLINE);
+        }
+        let Some(cache) = &self.cache else {
+            return;
+        };
+        let Some(index) = self.hover_index else {
+            return;
+        };
+        let map = &cache.layout;
+        let folder = map
+            .ancestors(index)
+            .next()
+            .filter(|&p| p != 0)
+            .map(|p| map.rects()[p].rect);
+        let hovered = map.rects().get(index).map(|r| r.rect);
+        if let Some(folder) = folder {
+            self.stroke(ctx, folder, FOLDER_COLOR, FOLDER_OUTLINE);
+        }
+        if let Some(hovered) = hovered {
+            self.stroke(ctx, hovered, HOVER_COLOR, OUTLINE);
+        }
+    }
+
+    fn on_event(&mut self, event: &Event) -> EventResult {
+        match event {
+            Event::MouseMove { pos } => {
+                if self.hit_test(*pos) {
+                    self.hover_at(*pos);
+                } else {
+                    self.clear_hover();
+                }
+                EventResult::Ignored
+            }
+            Event::MouseLeave => {
+                self.clear_hover();
+                EventResult::Ignored
+            }
+            Event::MouseDown {
+                pos,
+                button: MouseButton::Left,
+                ..
+            } => {
+                self.press(*pos);
+                EventResult::Consumed
+            }
+            Event::MouseUp {
+                button: MouseButton::Left,
+                ..
+            } => EventResult::Consumed,
+            Event::MouseDown {
+                button: BACK_BUTTON,
+                ..
+            } => {
+                self.state.zoom_out();
+                EventResult::Consumed
+            }
+            _ => EventResult::Ignored,
+        }
+    }
+
+    fn on_unconsumed_key(&mut self, key: &Key, modifiers: Modifiers) -> EventResult {
+        let plain = !(modifiers.ctrl || modifiers.meta || modifiers.alt);
+        match key {
+            Key::Backspace if plain && self.state.zoom_out() => EventResult::Consumed,
+            Key::Escape if self.state.selected().is_some() => {
+                self.state.set_selected(None);
+                EventResult::Consumed
+            }
+            _ => EventResult::Ignored,
+        }
+    }
+}

@@ -1,7 +1,8 @@
-//! Headless UI test of the whole M1 flow on the demo platform: start screen → click a drive
-//! → scan screen with live counters → results screen (totals, largest folders, top file
-//! types, size-mode switch) → Rescan → Back to the start screen. The harness is in
-//! `common/mod.rs`.
+//! Headless UI test of the whole flow on the demo platform: start screen → click a drive →
+//! scan screen with live counters → straight to the treemap view (toolbar, map, status bar
+//! with totals and the unreadable-items note) → size-mode switch → Rescan → back to the
+//! drive list. The harness is in `common/mod.rs`; the treemap's own interactions are tested
+//! in `treemap_view.rs`.
 
 mod common;
 
@@ -12,14 +13,16 @@ use common::Harness;
 use hdtreemap_core::model::SizeMode;
 use hdtreemap_core::platform::{profile, DemoPlatform, PlatformServices};
 use hdtreemap_core::state::Screen;
-use hdtreemap_core::ui::results_screen::{
-    ERRORS_ID, LARGEST_FOLDERS_ID, RESCAN_ID, RESULTS_BACK_ID, RESULTS_SCREEN_ID, SIZE_MODE_ID,
-    TOP_EXTENSIONS_ID,
+use hdtreemap_core::ui::breadcrumb::BREADCRUMB_ID;
+use hdtreemap_core::ui::main_view::{
+    BACK_ID, MAIN_VIEW_ID, RESCAN_ID, SIZE_MODE_ID, STATUS_ERRORS_ID, STATUS_FREE_ID,
+    STATUS_ITEM_ID, STATUS_TOTALS_ID,
 };
 use hdtreemap_core::ui::scan_screen::{
     CURRENT_PATH_ID, SCAN_COUNTERS_ID, SCAN_PROGRESS_ID, SCAN_SCREEN_ID,
 };
 use hdtreemap_core::ui::start_screen::{volume_card_id, START_SCREEN_ID};
+use hdtreemap_core::ui::treemap_view::TREEMAP_ID;
 
 /// Frames to wait for a 1.5 s paced scan (each frame sleeps a little, like a display).
 const MAX_FRAMES: usize = 2000;
@@ -33,7 +36,7 @@ fn wait_for_results(h: &mut Harness) {
 }
 
 #[test]
-fn start_scan_results_rescan_and_back() {
+fn start_scan_treemap_rescan_and_back() {
     let platform = DemoPlatform::default();
     let usb_index = platform
         .list_volumes()
@@ -57,42 +60,53 @@ fn start_scan_results_rescan_and_back() {
     });
     assert!(moved);
 
+    // A finished scan goes straight to the treemap.
     wait_for_results(&mut h);
-    assert!(h.visible(RESULTS_SCREEN_ID));
+    assert!(h.visible(MAIN_VIEW_ID));
     assert!(!h.visible(SCAN_SCREEN_ID));
-    assert!(h.visible(LARGEST_FOLDERS_ID));
-    assert!(h.visible(TOP_EXTENSIONS_ID));
+    assert!(h.visible(TREEMAP_ID));
+    assert!(h.visible(BREADCRUMB_ID));
+    assert!(h.state.map_counters().rasters >= 1, "the map was drawn");
+    let totals = h.label_text(STATUS_TOTALS_ID);
     assert!(
-        h.visible(ERRORS_ID),
+        totals.contains("files") && totals.contains("folders"),
+        "{totals}"
+    );
+    assert!(
+        h.label_text(STATUS_ERRORS_ID).contains("unreadable"),
         "the stick has an unreadable system folder"
     );
-    assert!(h.visible(SIZE_MODE_ID));
+    assert!(
+        !h.label_text(STATUS_ERRORS_ID).contains("Full Disk Access"),
+        "no macOS hint on the demo"
+    );
+    assert!(h.label_text(STATUS_FREE_ID).ends_with("free"));
+    assert!(h.visible(STATUS_ITEM_ID));
 
     // The size-mode switch re-sorts by apparent size: click its right half.
-    let rect = agg_gui::widget::find_widget_screen_rect(h.app.root(), SIZE_MODE_ID)
-        .expect("size mode switch");
-    let x = rect.x + rect.width * 0.75;
-    let y = common::HEIGHT - (rect.y + rect.height * 0.5);
+    let (x, y) = h.point_in(SIZE_MODE_ID, 0.75, 0.5);
     h.click_at(x, y);
     assert_eq!(h.state.size_mode(), SizeMode::Apparent);
-    assert!(h.visible(RESULTS_SCREEN_ID));
+    assert!(h.visible(MAIN_VIEW_ID));
 
     h.click(RESCAN_ID);
     assert!(matches!(h.state.screen(), Screen::Scanning(_)));
     wait_for_results(&mut h);
 
-    h.click(RESULTS_BACK_ID);
+    h.click(BACK_ID);
     assert_eq!(h.state.screen(), Screen::Start);
     assert!(h.visible(START_SCREEN_ID));
 }
 
 #[test]
-fn the_results_screen_survives_small_windows() {
+fn the_main_view_survives_small_windows() {
     let mut h = Harness::new(Rc::new(DemoPlatform::unpaced()));
     h.click(&volume_card_id(3));
     wait_for_results(&mut h);
-    for (w, ht) in [(640.0, 480.0), (320.0, 240.0), (1.0, 1.0)] {
-        h.app.layout(agg_gui::Size::new(w, ht));
+    for (w, ht) in [(640.0, 480.0), (320.0, 240.0), (40.0, 30.0), (1.0, 1.0)] {
+        h.resize(w, ht);
     }
-    h.frame();
+    h.app.layout(agg_gui::Size::new(0.0, 0.0));
+    h.resize(800.0, 600.0);
+    assert!(h.visible(TREEMAP_ID));
 }

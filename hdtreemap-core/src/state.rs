@@ -11,9 +11,13 @@
 //!
 //! A running scan is a [`ScanSource`] the state owns. `state/pump.rs` polls it once per UI
 //! frame (an agg-gui `ui_thread` drain hook) through [`AppState::pump`], which moves the app
-//! to the results screen when the source hands back its tree.
+//! to the results (treemap) screen when the source hands back its tree.
+//!
+//! What the treemap shows of the finished scan (zoom root, hover, selection, shading) and
+//! the finer-grained versions its widgets watch are in `state/view.rs`.
 
 mod pump;
+mod view;
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -23,6 +27,7 @@ use std::time::Duration;
 use web_time::Instant;
 
 pub use pump::{install_scan_pump, pump_scans, FRAME_BUDGET};
+pub use view::{Hover, MapCounters};
 
 use crate::model::{ExtTable, SizeMode};
 use crate::platform::VolumeInfo;
@@ -42,6 +47,8 @@ pub struct ScanTarget {
     pub volume_id: Option<String>,
     /// How many bytes the scan should find (a volume's used space), for a progress bar.
     pub expected_bytes: Option<u64>,
+    /// Free space on the volume, when a volume was chosen (for the status bar).
+    pub free_bytes: Option<u64>,
 }
 
 impl ScanTarget {
@@ -51,6 +58,7 @@ impl ScanTarget {
             volume_name: None,
             volume_id: None,
             expected_bytes: None,
+            free_bytes: None,
         }
     }
 
@@ -60,6 +68,7 @@ impl ScanTarget {
             volume_name: Some(volume.name.clone()),
             volume_id: Some(volume.id.clone()),
             expected_bytes: Some(volume.used_bytes()),
+            free_bytes: Some(volume.free_bytes),
         }
     }
 
@@ -79,7 +88,7 @@ pub enum Screen {
     Start,
     /// A scan of the target is running.
     Scanning(ScanTarget),
-    /// The target's scan finished; its result is in the state.
+    /// The target's scan finished; its result is in the state and the treemap shows it.
     Results(ScanTarget),
 }
 
@@ -96,6 +105,7 @@ struct Inner {
     progress_version: Cell<u64>,
     last_progress: Cell<Option<Instant>>,
     finished: RefCell<Option<Finished>>,
+    view: view::ViewState,
 }
 
 /// Everything the UI reads and writes. Cheap to clone; clones share the same state.
@@ -115,6 +125,7 @@ impl AppState {
                 progress_version: Cell::new(0),
                 last_progress: Cell::new(None),
                 finished: RefCell::new(None),
+                view: view::ViewState::new(),
             }),
         }
     }
@@ -201,6 +212,7 @@ impl AppState {
                     result: *result,
                     extensions,
                 });
+                self.reset_view();
                 let target = match self.screen() {
                     Screen::Scanning(target) | Screen::Results(target) => target,
                     Screen::Start => ScanTarget::folder(PathBuf::new()),
@@ -224,7 +236,8 @@ impl AppState {
             .unwrap_or_default()
     }
 
-    /// Re-sort the finished tree (and its extension table) by `mode`.
+    /// Re-sort the finished tree (and its extension table) by `mode`. The map re-lays out
+    /// (through [`AppState::tree_version`]); the screen itself is not rebuilt.
     pub fn set_size_mode(&self, mode: SizeMode) {
         let changed = {
             let mut finished = self.inner.finished.borrow_mut();
@@ -238,7 +251,7 @@ impl AppState {
             }
         };
         if changed {
-            self.bump();
+            self.tree_changed();
         }
     }
 
