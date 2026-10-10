@@ -12,8 +12,9 @@
 //!   subvolumes have their own `st_dev` yet are the same disk, and bind mounts keep theirs
 //!   yet repeat folders already counted.
 //! - macOS: scanning `/` would visit the data volume twice, once through the firmlinks
-//!   (`/Users`, `/Applications`, ...) and once at `/System/Volumes/Data`, so that path is
-//!   skipped and its device counts as the root's.
+//!   (`/Users`, `/Applications`, ...) and once at `/System/Volumes/Data`, so the firmlinked
+//!   folders are skipped there (the rest of the data volume is counted) and its device
+//!   counts as the root's.
 
 use std::fs::Metadata;
 use std::path::{Path, PathBuf};
@@ -169,13 +170,40 @@ pub(super) fn mount_plan(root: &Path) -> Option<Vec<PathBuf>> {
 #[cfg(target_os = "macos")]
 const MACOS_DATA_VOLUME: &str = "/System/Volumes/Data";
 
+/// macOS's table of firmlinks: `<path on the system volume>\t<path on the data volume>`.
+#[cfg(target_os = "macos")]
+const FIRMLINKS_TABLE: &str = "/usr/share/firmlinks";
+
+/// The data-volume ends of the firmlinks in `text` (the second, relative column of each
+/// well-formed line), such as `Users` or `usr/local`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(super) fn parse_firmlinks(text: &str) -> Vec<PathBuf> {
+    text.lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(_, target)| target.trim())
+        .filter(|target| !target.is_empty() && !target.starts_with('/'))
+        .map(PathBuf::from)
+        .collect()
+}
+
 /// Paths under `root` that duplicate data the scan reaches another way, and must be
-/// skipped (see the module docs).
+/// skipped (see the module docs). On macOS, scanning `/` skips the folders of the data
+/// volume that firmlinks already show at `/` (read from `/usr/share/firmlinks`) and enters
+/// the rest of `/System/Volumes/Data`, whose top-level items (`.Spotlight-V100`,
+/// `.fseventsd`, `.DocumentRevisions-V100`, ...) no firmlink reaches. Without the table it
+/// skips the whole data volume.
 pub(super) fn duplicate_mounts(root: &Path) -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         if root == Path::new("/") {
-            return vec![PathBuf::from(MACOS_DATA_VOLUME)];
+            let data = Path::new(MACOS_DATA_VOLUME);
+            let targets = std::fs::read_to_string(FIRMLINKS_TABLE)
+                .map(|text| parse_firmlinks(&text))
+                .unwrap_or_default();
+            if targets.is_empty() {
+                return vec![data.to_path_buf()];
+            }
+            return targets.iter().map(|t| data.join(t)).collect();
         }
     }
     let _ = root;
@@ -284,13 +312,35 @@ mod tests {
         assert!(sibling_devices(Path::new("/home/me")).is_empty());
     }
 
+    #[test]
+    fn firmlink_targets_are_read_from_the_table() {
+        let text = "/Applications\tApplications\n/Users\tUsers\n\
+                    /usr/local\tusr/local\n\nbroken line\n/x\t/absolute\n";
+        assert_eq!(
+            parse_firmlinks(text),
+            vec![
+                PathBuf::from("Applications"),
+                PathBuf::from("Users"),
+                PathBuf::from("usr/local")
+            ]
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_root_skips_the_data_volume() {
-        assert_eq!(
-            duplicate_mounts(Path::new("/")),
-            vec![PathBuf::from("/System/Volumes/Data")]
-        );
+    fn macos_root_skips_only_the_firmlinked_parts_of_the_data_volume() {
+        let skip = duplicate_mounts(Path::new("/"));
+        let data = PathBuf::from(MACOS_DATA_VOLUME);
+        if Path::new(FIRMLINKS_TABLE).exists() {
+            // The data volume is entered (its .Spotlight-V100, .fseventsd, ... are counted);
+            // what the firmlinks show at / is not counted twice.
+            assert!(!skip.contains(&data), "{skip:?}");
+            assert!(skip.contains(&data.join("Users")), "{skip:?}");
+            assert!(skip.contains(&data.join("Applications")), "{skip:?}");
+            assert!(skip.contains(&data.join("usr/local")), "{skip:?}");
+        } else {
+            assert_eq!(skip, vec![data]);
+        }
         assert_eq!(sibling_devices(Path::new("/")).len(), 1);
     }
 }
