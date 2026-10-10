@@ -1,42 +1,43 @@
 //! `FolderTree`: the folder tree beside the map (`docs/PLAN.md` §2, view 2), an agg-gui
 //! `TreeView` kept in step with `AppState`.
 //!
-//! Rows show a Font Awesome folder or file icon ([`icons`]), the name, the size in the
-//! active size mode and the share of the parent folder; children are sorted by size and
-//! added lazily, at most [`rows::CHILD_CAP`] per folder ([`rows`]). The `TreeView` does the
-//! drawing, scrolling, selection and keyboard navigation; this wrapper links it to the other
-//! views, once per layout:
+//! Rows show a Font Awesome folder or file glyph, the name, the size in the active size mode
+//! (the row's secondary text) and the share of the parent folder (its fraction bar);
+//! children are sorted by size and added lazily, at most [`rows::CHILD_CAP`] per folder
+//! ([`rows`]). The `TreeView` does the drawing, scrolling, selection, focus and keyboard
+//! navigation; this wrapper links it to the other views, once per layout:
 //!
-//! - **tree → state**: a row the user selects becomes `AppState::selected` (the map outlines
-//!   it, the status bar describes it); the hovered row becomes `AppState::hovered` (the map
-//!   outlines it); a double click or Enter on a folder row zooms the map to it.
-//! - **state → tree**: a selection made elsewhere (the map) expands the folders above it,
-//!   selects its row and scrolls the row into view; zooming the map expands the path down
-//!   to the zoom root (the default expansion); a new tree version (size mode) rebuilds the
-//!   rows with new sizes and order, keeping what was expanded.
+//! - **tree → state**: the `TreeView`'s events ([`TreeViewEvent`]) are drained: a folder
+//!   the user expands gets its children; a selection becomes `AppState::selected` (the map
+//!   outlines it, the status bar describes it); a double click or Enter on a folder
+//!   (`Activated`) zooms the map to it. The hovered row becomes `AppState::hovered`.
+//! - **state → tree**: a selection made elsewhere (the map) opens the folders above it,
+//!   selects its row (`select_single`) and scrolls it into view
+//!   (`scroll_node_into_view`); zooming the map opens the path down to the zoom root; a new
+//!   tree version (size mode, Move to Trash, a rescan) rebuilds the rows with new sizes and
+//!   order, keeping what was open.
 //!
-//! The wrapper reads and writes the `TreeView`'s public node list and scrolls it with
-//! `scroll_node_into_view` (moving to the rest of its newer selection and event API is a
-//! separate step). The wrapper also takes
-//! the pointer and keyboard focus and forwards events to the `TreeView` (see
-//! `claims_pointer_exclusively`).
+//! The tree stays small: folders it opened on its own to show an earlier zoom root or
+//! selection are closed again, and their rows dropped (`remove_children`), when the next
+//! one is shown elsewhere. Folders the user opened are left alone.
+//!
+//! [`FolderTree::node_at`] finds the row under a point from the `TreeView`'s own row
+//! geometry, so it is right however far the tree is scrolled.
 
-pub mod icons;
 pub mod rows;
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use agg_gui::event::current_click_count;
+use agg_gui::widgets::tree_view::TreeNode;
 use agg_gui::{
-    DrawCtx, Event, EventResult, HAnchor, Key, MouseButton, Point, Rect, ScrollAlign, Size,
-    TreeView, VAnchor, Widget, WidgetBase,
+    DrawCtx, Event, EventResult, HAnchor, Point, Rect, ScrollAlign, Size, TreeView, TreeViewEvent,
+    VAnchor, Widget, WidgetBase,
 };
 
 use crate::fonts::Fonts;
-use crate::model::NodeId;
+use crate::model::{NodeId, Tree};
 use crate::state::{AppState, Hover};
-use icons::TreeIcons;
 use rows::Rows;
 
 /// Widget id of the folder tree.
@@ -46,9 +47,17 @@ pub const FOLDER_TREE_ID: &str = "folder-tree";
 const ROW_HEIGHT: f64 = 22.0;
 /// Text size of the rows.
 const FONT_SIZE: f64 = 13.0;
-/// Rows (`TreeView` nodes) past which collapsed folders' rows are dropped (or, when the open
-/// folders alone need more, that many plus two folders' worth).
-pub const PRUNE_AT: usize = 1500;
+
+/// What a row shows (see [`FolderTree::row`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RowText {
+    /// The name.
+    pub label: String,
+    /// The size in the active mode.
+    pub secondary: Option<String>,
+    /// The share of the parent folder (none for the scan root).
+    pub fraction: Option<f32>,
+}
 
 /// See the module docs.
 pub struct FolderTree {
@@ -57,38 +66,30 @@ pub struct FolderTree {
     children: Vec<Box<dyn Widget>>,
     base: WidgetBase,
     state: AppState,
-    icons: TreeIcons,
     rows: Rows,
     /// Tree version the rows were built for.
     built_for: Option<u64>,
-    /// Zoom root whose path was last expanded.
+    /// Zoom root whose path was last opened.
     zoom_synced: Option<NodeId>,
     /// The `AppState` selection the tree shows.
     selection_synced: Option<NodeId>,
-    /// The `TreeView` row last seen (or made) selected.
-    row_selected: Option<usize>,
     /// The `TreeView` row last seen hovered.
     row_hovered: Option<usize>,
     /// The hover this view put into `AppState` (cleared when the pointer leaves).
     hover_pushed: Option<Hover>,
-    /// A double click landed on the tree: zoom to the selected folder after the `TreeView`
-    /// selected the row under it.
-    activate: bool,
-    /// Row to scroll into view after the next `TreeView` layout.
-    scroll_to: Option<usize>,
     /// Folders the tree opened itself to show a zoom root or selection (closed again when
     /// the next one is shown elsewhere).
     auto_expanded: HashSet<NodeId>,
-    /// Rows right after the last rebuild (what the open folders need): pruning waits until
-    /// collapsed folders hold a good many more than that.
-    rebuilt_len: usize,
 }
 
 impl FolderTree {
     pub fn new(state: &AppState, fonts: &Fonts) -> Self {
         let view = TreeView::new(Arc::clone(&fonts.ui))
+            .with_icon_font(Arc::clone(&fonts.icons))
             .with_row_height(ROW_HEIGHT)
             .with_font_size(FONT_SIZE)
+            // Enter zooms (Activated), it does not toggle the folder.
+            .with_enter_toggles_expansion(false)
             .with_h_anchor(HAnchor::STRETCH)
             .with_v_anchor(VAnchor::STRETCH);
         Self {
@@ -98,18 +99,13 @@ impl FolderTree {
                 .with_h_anchor(HAnchor::STRETCH)
                 .with_v_anchor(VAnchor::STRETCH),
             state: state.clone(),
-            icons: TreeIcons::new(&fonts.icons),
             rows: Rows::default(),
             built_for: None,
             zoom_synced: None,
             selection_synced: None,
-            row_selected: None,
             row_hovered: None,
             hover_pushed: None,
-            activate: false,
-            scroll_to: None,
             auto_expanded: HashSet::new(),
-            rebuilt_len: 0,
         }
     }
 
@@ -124,15 +120,14 @@ impl FolderTree {
             .downcast_mut::<TreeView>()
     }
 
-    /// How many rows (`TreeView` nodes, stand-ins included) exist: the lazy tree's size.
+    /// How many rows (`TreeView` nodes) exist: the lazy tree's size.
     pub fn node_count(&self) -> usize {
         self.view().map_or(0, |v| v.nodes.len())
     }
 
     /// The scanned node of the selected row.
     pub fn selected_node(&self) -> Option<NodeId> {
-        let view = self.view()?;
-        let idx = view.nodes.iter().position(|n| n.is_selected)?;
+        let idx = *self.view()?.selected_nodes().first()?;
         self.rows.node_at(idx)
     }
 
@@ -141,18 +136,27 @@ impl FolderTree {
         let Some(&idx) = self.rows.index.get(&node) else {
             return false;
         };
-        self.view()
-            .and_then(|v| v.nodes.get(idx))
-            .is_some_and(|n| n.is_expanded)
+        self.view().is_some_and(|v| v.is_expanded(idx))
     }
 
-    /// The label of `node`'s row.
-    pub fn row_label(&self, node: NodeId) -> Option<String> {
+    /// `node`'s row as shown: its label (the name), secondary text (the size) and fraction
+    /// bar (the share of its folder).
+    pub fn row(&self, node: NodeId) -> Option<RowText> {
         let idx = *self.rows.index.get(&node)?;
-        Some(self.view()?.nodes.get(idx)?.label.clone())
+        let n = self.view()?.nodes.get(idx)?;
+        Some(RowText {
+            label: n.label.clone(),
+            secondary: n.secondary_text.clone(),
+            fraction: n.fraction,
+        })
     }
 
-    /// The labels of the visible rows below `folder` (expanded), top first.
+    /// The label of `node`'s row (its name).
+    pub fn row_label(&self, node: NodeId) -> Option<String> {
+        self.row(node).map(|r| r.label)
+    }
+
+    /// The labels of the rows below `folder` (expanded), top first.
     pub fn child_labels(&self, folder: NodeId) -> Vec<String> {
         let (Some(view), Some(&parent)) = (self.view(), self.rows.index.get(&folder)) else {
             return Vec::new();
@@ -166,24 +170,53 @@ impl FolderTree {
         kids.into_iter().map(|n| n.label.clone()).collect()
     }
 
-    /// `node`'s row in this widget's local (Y-up) coordinates, when it is visible.
+    /// `node`'s row in this widget's local (Y-up) coordinates, when it is in view.
     pub fn row_rect(&self, node: NodeId) -> Option<Rect> {
         let idx = *self.rows.index.get(&node)?;
         let view = self.view()?;
         let position = Rows::visible_position(&view.nodes, idx)?;
-        let y = self.row_bottom(position)?;
+        let y = self.bounds.height - (position as f64 + 1.0) * ROW_HEIGHT + view.scroll_offset();
         let rect = Rect::new(0.0, y, self.bounds.width, ROW_HEIGHT);
         (y >= 0.0 && y + ROW_HEIGHT <= self.bounds.height).then_some(rect)
     }
 
-    /// The bottom of the row at visible `position` (local, Y-up), at the `TreeView`'s
-    /// current scroll offset (its rows are virtualised: only those on screen are widgets).
-    fn row_bottom(&self, position: usize) -> Option<f64> {
-        let offset = self.view()?.scroll_offset();
-        Some(self.bounds.height - (position as f64 + 1.0) * ROW_HEIGHT + offset)
+    /// The scanned node whose row is under `pos` (local, Y-up), from the `TreeView`'s row
+    /// geometry at its current scroll offset.
+    pub fn node_at(&mut self, pos: Point) -> Option<NodeId> {
+        if pos.y < 0.0 || pos.y > self.bounds.height {
+            return None;
+        }
+        let view = self.view_mut()?;
+        let from_top = self_height(view) - pos.y + view.scroll_offset();
+        if from_top < 0.0 {
+            return None;
+        }
+        let row = (from_top / ROW_HEIGHT).floor() as usize;
+        let idx = view.node_at_row(row)?;
+        let rect = view.node_row_rect(idx)?;
+        let inside = pos.y >= rect.y && pos.y <= rect.y + rect.height;
+        if !inside {
+            return None;
+        }
+        self.rows.node_at(idx)
     }
 
-    /// Rebuild the rows when the tree changed (a new scan or size mode).
+    /// Run `f` with the `TreeView`'s nodes, the rows and the finished tree.
+    fn with_tree<R>(
+        &mut self,
+        f: impl FnOnce(&mut Vec<TreeNode>, &mut Rows, &Tree) -> R,
+    ) -> Option<R> {
+        let state = self.state.clone();
+        let mut rows = std::mem::take(&mut self.rows);
+        let out = match self.view_mut() {
+            Some(view) => state.with_result(|r, _| f(&mut view.nodes, &mut rows, &r.tree)),
+            None => None,
+        };
+        self.rows = rows;
+        out
+    }
+
+    /// Rebuild the rows when the tree changed (a new scan, size mode or edit).
     fn sync_tree(&mut self) {
         let version = self.state.tree_version();
         if self.built_for == Some(version) {
@@ -211,28 +244,30 @@ impl FolderTree {
     }
 
     /// Build the rows again from the scan root, opening exactly the folders in `expanded`
-    /// (top down: a folder's children exist once its parent is populated). Rows of
-    /// collapsed folders' contents are dropped. Row indices change, so the selection is
-    /// looked up again on the next sync.
+    /// (top down: a folder's children exist once its parent is populated). Row indices
+    /// change, so the selection is looked up again on the next sync.
     fn rebuild(&mut self, expanded: &HashSet<NodeId>) {
-        self.with_tree(|nodes, rows, tree, icons| {
-            rows.reset(nodes, tree, icons);
+        if let Some(view) = self.view_mut() {
+            view.clear_selection();
+            view.set_cursor_node(None);
+            view.take_events();
+        }
+        self.with_tree(|nodes, rows, tree| {
+            rows.reset(nodes, tree);
             let mut stack = vec![tree.root()];
             while let Some(folder) = stack.pop() {
                 if !expanded.contains(&folder) {
                     continue;
                 }
                 if let Some(&idx) = rows.index.get(&folder) {
-                    rows.populate(nodes, tree, icons, idx);
+                    rows.populate(nodes, tree, idx);
                     nodes[idx].is_expanded = true;
                     stack.extend(tree.children(folder));
                 }
             }
         });
         self.selection_synced = None;
-        self.row_selected = None;
         self.row_hovered = None;
-        self.rebuilt_len = self.node_count();
     }
 
     /// `node` and the folders above it.
@@ -251,29 +286,37 @@ impl FolderTree {
 
     /// Before revealing a new zoom root or selection: close the folders the tree opened on
     /// its own for earlier ones (not those the user opened), unless they lead to the zoom
-    /// root or the selection. Returns the folders on `paths` that are closed now, so the
-    /// caller can record which ones the reveal opens.
+    /// root or the selection, and drop their rows. Returns the folders on `paths` that are
+    /// closed now, so the caller can record which ones the reveal opens.
     fn close_auto_expanded(&mut self, paths: &[NodeId]) -> Vec<NodeId> {
         let keep: HashSet<NodeId> = paths.iter().copied().collect();
-        let close: Vec<usize> = self
+        let close: Vec<NodeId> = self
             .auto_expanded
             .iter()
+            .copied()
             .filter(|f| !keep.contains(f))
-            .filter_map(|f| self.rows.index.get(f).copied())
             .collect();
         self.auto_expanded.retain(|f| keep.contains(f));
-        if let Some(view) = self.view_mut() {
-            for idx in close {
-                if let Some(n) = view.nodes.get_mut(idx) {
-                    n.is_expanded = false;
-                }
-            }
+        for folder in close {
+            self.prune(folder);
         }
         paths
             .iter()
             .copied()
             .filter(|&f| !self.is_expanded(f))
             .collect()
+    }
+
+    /// Collapse `folder` and drop its rows (they are added again when it opens).
+    fn prune(&mut self, folder: NodeId) {
+        let Some(&idx) = self.rows.index.get(&folder) else {
+            return;
+        };
+        let Some(map) = self.view_mut().map(|v| v.remove_children(idx)) else {
+            return;
+        };
+        self.with_tree(|nodes, rows, tree| rows.remap(nodes, tree, idx, &map));
+        self.row_hovered = self.row_hovered.and_then(|r| map.get(r).copied().flatten());
     }
 
     /// Remember which of `were_closed` are open now (the tree opened them).
@@ -285,57 +328,32 @@ impl FolderTree {
         }
     }
 
-    /// Run `f` with the `TreeView`'s nodes, the rows and the finished tree.
-    fn with_tree<R>(
-        &mut self,
-        f: impl FnOnce(
-            &mut Vec<agg_gui::widgets::tree_view::TreeNode>,
-            &mut Rows,
-            &crate::model::Tree,
-            &TreeIcons,
-        ) -> R,
-    ) -> Option<R> {
-        let state = self.state.clone();
-        let icons = self.icons.clone();
-        let mut rows = std::mem::take(&mut self.rows);
-        let out = match self.view_mut() {
-            Some(view) => state.with_result(|r, _| f(&mut view.nodes, &mut rows, &r.tree, &icons)),
-            None => None,
-        };
-        self.rows = rows;
-        out
-    }
-
-    /// Carry what the user did in the `TreeView` (select, hover, activate) into the state.
+    /// Carry what the user did in the `TreeView` (expand, select, activate, hover) into the
+    /// rows and the state.
     fn pull_from_view(&mut self) {
-        let Some(view) = self.view() else {
-            return;
-        };
-        // The selected row: a newly selected one, else the one we know if still selected.
-        let selected: Vec<usize> = view
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| n.is_selected)
-            .map(|(i, _)| i)
-            .collect();
-        let row = selected
-            .iter()
-            .copied()
-            .find(|&i| Some(i) != self.row_selected)
-            .or_else(|| self.row_selected.filter(|i| selected.contains(i)));
-        let hovered = view.hovered_node_idx();
-
-        if row != self.row_selected {
-            self.row_selected = row;
-            if let Some(node) = row.and_then(|i| self.rows.node_at(i)) {
-                self.selection_synced = Some(node);
-                self.state.set_selected(Some(node));
-            } else if row.is_none() {
-                self.selection_synced = None;
-                self.state.set_selected(None);
+        let events = self
+            .view_mut()
+            .map(TreeView::take_events)
+            .unwrap_or_default();
+        for event in events {
+            match event {
+                TreeViewEvent::Expanded(idx) => {
+                    self.with_tree(|nodes, rows, tree| rows.populate(nodes, tree, idx));
+                    if let Some(node) = self.rows.node_at(idx) {
+                        // The user opened it: it is theirs, never auto-closed.
+                        self.auto_expanded.remove(&node);
+                    }
+                }
+                TreeViewEvent::Collapsed(idx) => {
+                    if let Some(node) = self.rows.node_at(idx) {
+                        self.auto_expanded.remove(&node);
+                    }
+                }
+                TreeViewEvent::SelectionChanged { .. } => self.selection_from_view(),
+                TreeViewEvent::Activated(idx) => self.activate(idx),
             }
         }
+        let hovered = self.view().and_then(TreeView::hovered_node_idx);
         if hovered != self.row_hovered {
             self.row_hovered = hovered;
             let hover = hovered
@@ -346,8 +364,38 @@ impl FolderTree {
                 });
             self.push_hover(hover);
         }
-        if std::mem::take(&mut self.activate) {
-            self.activate_selected();
+    }
+
+    /// The user selected a row: make its node the app's selection ("more" rows have none).
+    fn selection_from_view(&mut self) {
+        let row = self
+            .view()
+            .and_then(|v| v.selected_nodes().first().copied());
+        match row {
+            Some(idx) => {
+                if let Some(node) = self.rows.node_at(idx) {
+                    self.selection_synced = Some(node);
+                    self.state.set_selected(Some(node));
+                }
+            }
+            None => {
+                self.selection_synced = None;
+                self.state.set_selected(None);
+            }
+        }
+    }
+
+    /// A double click or Enter on row `idx`: zoom the map to it if it is a folder.
+    fn activate(&mut self, idx: usize) {
+        let Some(node) = self.rows.node_at(idx) else {
+            return;
+        };
+        let is_dir = self
+            .state
+            .with_result(|r, _| r.tree.node(node).is_some_and(|n| n.is_dir()))
+            .unwrap_or(false);
+        if is_dir {
+            self.state.set_zoom_root(node);
         }
     }
 
@@ -368,21 +416,6 @@ impl FolderTree {
         }
     }
 
-    /// Zoom the map to the selected row's folder. Returns whether it was a folder.
-    fn activate_selected(&mut self) -> bool {
-        let Some(node) = self.row_selected.and_then(|i| self.rows.node_at(i)) else {
-            return false;
-        };
-        let is_dir = self
-            .state
-            .with_result(|r, _| r.tree.node(node).is_some_and(|n| n.is_dir()))
-            .unwrap_or(false);
-        if is_dir {
-            self.state.set_zoom_root(node);
-        }
-        is_dir
-    }
-
     /// Carry the state into the tree: the zoom path and a selection made elsewhere.
     fn push_from_state(&mut self) {
         let zoom = self.state.zoom_root();
@@ -392,15 +425,8 @@ impl FolderTree {
             let mut paths = self.path_to(Some(zoom));
             paths.extend(self.path_to(selected));
             let closed = self.close_auto_expanded(&paths);
-            self.with_tree(|nodes, rows, tree, icons| rows.expand_to(nodes, tree, icons, zoom));
+            self.with_tree(|nodes, rows, tree| rows.expand_to(nodes, tree, zoom));
             self.note_auto_expanded(closed);
-        }
-        let budget = PRUNE_AT.max(self.rebuilt_len + 2 * rows::CHILD_CAP);
-        if self.node_count() > budget {
-            // Collapsed folders keep their rows until now; drop them so the TreeView,
-            // whose layout cost grows with every row it holds, stays small.
-            let expanded = self.expanded_folders();
-            self.rebuild(&expanded);
         }
         if self.selection_synced == selected {
             return;
@@ -408,7 +434,7 @@ impl FolderTree {
         self.selection_synced = selected;
         let row = match selected {
             Some(node) => {
-                let from_tree = self.row_selected.and_then(|i| self.rows.node_at(i)) == Some(node);
+                let from_tree = self.selected_node() == Some(node);
                 let closed = if from_tree {
                     Vec::new()
                 } else {
@@ -417,7 +443,7 @@ impl FolderTree {
                     self.close_auto_expanded(&paths)
                 };
                 let row = self
-                    .with_tree(|nodes, rows, tree, icons| rows.reveal(nodes, tree, icons, node))
+                    .with_tree(|nodes, rows, tree| rows.reveal(nodes, tree, node))
                     .flatten();
                 self.note_auto_expanded(closed);
                 row
@@ -425,21 +451,20 @@ impl FolderTree {
             None => None,
         };
         if let Some(view) = self.view_mut() {
-            for (i, n) in view.nodes.iter_mut().enumerate() {
-                n.is_selected = Some(i) == row;
+            match row {
+                Some(idx) => {
+                    view.select_single(idx);
+                    view.scroll_node_into_view(idx, ScrollAlign::Center);
+                }
+                None => view.clear_selection(),
             }
         }
-        self.row_selected = row;
-        self.scroll_to = row;
     }
+}
 
-    /// Scroll the `TreeView` so row `idx` is in view (centred when it was out of view), at
-    /// its next layout.
-    fn scroll_into_view(&mut self, idx: usize) {
-        if let Some(view) = self.view_mut() {
-            view.scroll_node_into_view(idx, ScrollAlign::Center);
-        }
-    }
+/// The `TreeView`'s viewport height (its bounds; rows are positioned from its top).
+fn self_height(view: &TreeView) -> f64 {
+    view.bounds().height
 }
 
 impl Widget for FolderTree {
@@ -491,7 +516,6 @@ impl Widget for FolderTree {
         let size = Size::new(available.width.max(0.0), available.height.max(0.0));
         self.bounds = Rect::new(0.0, 0.0, size.width, size.height);
         self.sync_tree();
-        self.with_tree(|nodes, rows, tree, icons| rows.populate_expanded(nodes, tree, icons));
         self.pull_from_view();
         self.push_from_state();
         let local = Rect::new(0.0, 0.0, size.width, size.height);
@@ -499,28 +523,10 @@ impl Widget for FolderTree {
             view.layout(size);
             view.set_bounds(local);
         }
-        if let Some(idx) = self.scroll_to.take() {
-            self.scroll_into_view(idx);
-            if let Some(view) = self.children.first_mut() {
-                view.layout(size);
-                view.set_bounds(local);
-            }
-        }
         size
     }
 
     fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
-
-    fn is_focusable(&self) -> bool {
-        true
-    }
-
-    /// The wrapper takes every pointer event and focus itself and hands them to its
-    /// `TreeView`: a click on a row would otherwise land on the row's label, which cannot
-    /// take focus, and the `TreeView` would never get the keyboard.
-    fn claims_pointer_exclusively(&self, _local_pos: Point) -> bool {
-        true
-    }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
         match event {
@@ -530,36 +536,9 @@ impl Widget for FolderTree {
                 }
                 self.row_hovered = None;
                 self.push_hover(None);
-                return EventResult::Ignored;
+                EventResult::Ignored
             }
-            Event::KeyDown {
-                key: Key::Enter,
-                modifiers,
-            } if !(modifiers.ctrl || modifiers.meta || modifiers.alt) => {
-                // Enter on a folder zooms (instead of the TreeView's expand toggle).
-                self.pull_from_view();
-                if self.activate_selected() {
-                    return EventResult::Consumed;
-                }
-            }
-            _ => {}
+            _ => EventResult::Ignored,
         }
-        let double_click = matches!(
-            event,
-            Event::MouseDown {
-                button: MouseButton::Left,
-                ..
-            }
-        ) && current_click_count() >= 2;
-        let result = match self.view_mut() {
-            Some(view) => view.on_event(event),
-            None => EventResult::Ignored,
-        };
-        if double_click {
-            // The TreeView selected the row under the press; zoom on the next layout.
-            self.activate = true;
-            agg_gui::animation::request_draw();
-        }
-        result
     }
 }

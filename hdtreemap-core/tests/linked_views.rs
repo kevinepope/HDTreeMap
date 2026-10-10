@@ -202,7 +202,7 @@ fn the_lazy_tree_only_builds_rows_for_open_folders() {
     assert!(files > 1_000_000, "the archive server is big: {files}");
     let count = tree(&h).node_count();
     assert!(count < 2 * CHILD_CAP + 10, "{count} rows for a fresh tree");
-    // Opening the biggest folder adds at most its capped children (plus stand-ins).
+    // Opening the biggest folder adds at most its capped children (and a "more" row).
     let biggest = root_children(&h.state)[0];
     click_row(&mut h, biggest);
     h.key(Key::ArrowRight);
@@ -238,8 +238,17 @@ fn the_lazy_tree_only_builds_rows_for_open_folders() {
 fn rows_show_size_and_share_of_the_parent() {
     let h = demo_map("usb-stick");
     let movies = root_children(&h.state)[0];
-    let label = tree(&h).row_label(movies).expect("label");
-    assert_eq!(label, "Movies  \u{b7}  10.5 GB  \u{b7}  50.0%");
+    let row = tree(&h).row(movies).expect("row");
+    assert_eq!(row.label, "Movies");
+    assert_eq!(row.secondary.as_deref(), Some("10.5 GB"));
+    let share = row.fraction.expect("a share bar");
+    assert!((share - 0.5).abs() < 0.001, "{share}");
+    let root = h.state.with_result(|r, _| r.tree.root()).expect("root");
+    let root_row = tree(&h).row(root).expect("root row");
+    assert_eq!(
+        root_row.fraction, None,
+        "the scan root has no parent to share"
+    );
 }
 
 #[test]
@@ -369,7 +378,9 @@ fn files_without_an_extension_have_their_own_legend_row() {
 
 #[test]
 fn selecting_around_the_map_keeps_the_tree_small() {
-    use hdtreemap_core::ui::folder_tree::PRUNE_AT;
+    // Folders the tree opened for an earlier selection are closed and their rows dropped,
+    // so the tree holds about one path's worth of folders, whatever was clicked before.
+    const MOST_ROWS: usize = 1500;
     let mut h = demo_map("dev-workstation");
     let mut peak = 0;
     let mut selected = 0;
@@ -401,7 +412,7 @@ fn selecting_around_the_map_keeps_the_tree_small() {
     }
     assert!(selected > 30, "{selected} selections");
     assert!(
-        peak <= PRUNE_AT + 2 * CHILD_CAP + 2 * CHILD_CAP,
+        peak <= MOST_ROWS + 2 * CHILD_CAP + 2 * CHILD_CAP,
         "the tree grew to {peak} rows"
     );
     // Folders opened only to show an earlier selection close again.

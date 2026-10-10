@@ -1,43 +1,46 @@
 //! The folder tree's lazy row model: which scanned nodes have a `TreeView` node, and the
-//! code that adds them.
+//! code that adds and removes them.
 //!
 //! A `TreeView` lists every node it holds, so it is never handed the whole scan (millions of
 //! files). It starts with the scan root, and a folder's children are added only when the
-//! folder is expanded ([`Rows::populate`]). Until then an unexpanded folder carries one
-//! hidden stand-in child (an [`Entry::Placeholder`]) so the view draws its expand arrow; on
-//! expansion the stand-in's slot becomes the first real child (`TreeView` nodes are
-//! addressed by index, so nothing is ever removed). Each folder lists at most [`CHILD_CAP`]
-//! children, largest first (the tree keeps children sorted by size), and one
-//! [`Entry::More`] row summing up the rest.
+//! folder is expanded ([`Rows::populate`], on `TreeViewEvent::Expanded` or when the tree
+//! opens a folder itself). Until then a folder with contents shows its expand arrow through
+//! `TreeNode::may_have_children`. Each folder lists at most [`CHILD_CAP`] children, largest
+//! first (the tree keeps children sorted by size), and one [`Entry::More`] row summing up
+//! the rest. A folder's rows can be dropped again ([`Rows::remap`] after
+//! `TreeView::remove_children`), so it is populated anew when next opened.
+//!
+//! Each row shows a Font Awesome glyph, the name, the size in the active mode (the row's
+//! secondary text) and its share of the parent folder (the row's fraction bar).
 //!
 //! `entries` runs parallel to `TreeView::nodes`; `index` maps a scanned node to its row.
 
 use std::collections::HashMap;
 
 use agg_gui::widgets::tree_view::TreeNode;
-use agg_gui::NodeIcon;
+use agg_gui::{Color, NodeGlyph, NodeIcon};
 
-use super::icons::TreeIcons;
-use crate::format::{format_bytes, format_count, format_percent};
+use crate::fonts::fa;
+use crate::format::{format_bytes, format_count};
 use crate::model::{NodeId, Tree};
 
 /// Most children a folder lists; the rest share one "N more" row.
 pub const CHILD_CAP: usize = 200;
 
+/// Folder icons: the tree view's folder yellow.
+const FOLDER_COLOR: Color = Color::rgb(0.90, 0.72, 0.20);
+/// File icons.
+const FILE_COLOR: Color = Color::rgb(0.62, 0.74, 0.86);
+/// The "N more items" row.
+const MORE_COLOR: Color = Color::rgb(0.6, 0.6, 0.6);
+
 /// What a `TreeView` node stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Entry {
-    /// A scanned file or folder. `placeholder` is the stand-in child of a folder whose
-    /// children have not been added yet.
-    Node {
-        id: NodeId,
-        populated: bool,
-        placeholder: Option<usize>,
-    },
+    /// A scanned file or folder; `populated` once its children have rows.
+    Node { id: NodeId, populated: bool },
     /// The children of `parent` past [`CHILD_CAP`].
     More { parent: NodeId },
-    /// The stand-in child of an unexpanded folder (never shown).
-    Placeholder,
 }
 
 /// See the module docs.
@@ -52,60 +55,27 @@ pub struct Rows {
 
 impl Rows {
     /// Start over with just the scan root (collapsed).
-    pub fn reset(&mut self, nodes: &mut Vec<TreeNode>, tree: &Tree, icons: &TreeIcons) {
+    pub fn reset(&mut self, nodes: &mut Vec<TreeNode>, tree: &Tree) {
         nodes.clear();
         self.entries.clear();
         self.index.clear();
         self.more.clear();
-        self.add_node(nodes, tree, icons, tree.root(), None, 0, None);
+        self.add_node(nodes, tree, tree.root(), None, 0);
     }
 
-    /// The scanned node a `TreeView` node shows (`None` for "more" rows and stand-ins).
+    /// The scanned node a `TreeView` node shows (`None` for "more" rows).
     pub fn node_at(&self, idx: usize) -> Option<NodeId> {
         match self.entries.get(idx)? {
             Entry::Node { id, .. } => Some(*id),
-            _ => None,
+            Entry::More { .. } => None,
         }
-    }
-
-    /// Add the children of every expanded folder that does not have them yet. Returns
-    /// whether anything was added.
-    pub fn populate_expanded(
-        &mut self,
-        nodes: &mut Vec<TreeNode>,
-        tree: &Tree,
-        icons: &TreeIcons,
-    ) -> bool {
-        let pending: Vec<usize> = (0..self.entries.len())
-            .filter(|&i| {
-                nodes.get(i).is_some_and(|n| n.is_expanded)
-                    && matches!(
-                        self.entries[i],
-                        Entry::Node {
-                            populated: false,
-                            ..
-                        }
-                    )
-            })
-            .collect();
-        for &idx in &pending {
-            self.populate(nodes, tree, icons, idx);
-        }
-        !pending.is_empty()
     }
 
     /// Add the children of the folder at `idx` (once).
-    pub fn populate(
-        &mut self,
-        nodes: &mut Vec<TreeNode>,
-        tree: &Tree,
-        icons: &TreeIcons,
-        idx: usize,
-    ) {
+    pub fn populate(&mut self, nodes: &mut Vec<TreeNode>, tree: &Tree, idx: usize) {
         let Some(Entry::Node {
             id,
             populated: false,
-            placeholder,
         }) = self.entries.get(idx).copied()
         else {
             return;
@@ -113,28 +83,18 @@ impl Rows {
         self.entries[idx] = Entry::Node {
             id,
             populated: true,
-            placeholder: None,
         };
         let parent_size = tree.size(id);
-        let mut slot = placeholder;
         let mut rest_count = 0u64;
         let mut rest_bytes = 0u64;
         let mut rest_dirs = false;
         let mut rest_files = false;
         for (order, child) in tree.children(id).filter(|&c| tree.is_live(c)).enumerate() {
             if order < CHILD_CAP {
-                self.add_node(
-                    nodes,
-                    tree,
-                    icons,
-                    child,
-                    Some(idx),
-                    order as u32,
-                    slot.take(),
-                );
+                self.add_node(nodes, tree, child, Some(idx), order as u32);
             } else {
                 rest_count += 1;
-                rest_bytes += tree.size(child);
+                rest_bytes = rest_bytes.saturating_add(tree.size(child));
                 let is_dir = tree.node(child).is_some_and(|n| n.is_dir());
                 rest_dirs |= is_dir;
                 rest_files |= !is_dir;
@@ -149,31 +109,18 @@ impl Rows {
                 (_, _, true) => "item",
                 _ => "items",
             };
-            let label = format!(
-                "{} more {noun}  \u{b7}  {}  \u{b7}  {}",
-                format_count(rest_count),
-                format_bytes(rest_bytes),
-                format_percent(rest_bytes, parent_size)
-            );
-            let more = place(
-                nodes,
-                slot.take(),
-                tree_node(
-                    label,
-                    NodeIcon::File,
-                    icons.more.clone(),
-                    idx,
-                    CHILD_CAP as u32,
-                ),
-            );
+            let label = format!("{} more {noun}", format_count(rest_count));
+            let mut row = TreeNode::new(label, NodeIcon::File, Some(idx), CHILD_CAP as u32);
+            row.icon_glyph = Some(NodeGlyph::new(fa::ELLIPSIS_H, MORE_COLOR));
+            row.secondary_text = Some(format_bytes(rest_bytes));
+            row.fraction = Some(share(rest_bytes, parent_size));
+            let more = push(nodes, row);
             self.set_entry(more, Entry::More { parent: id });
             self.more.insert(id, more);
         }
-        if let Some(unused) = slot {
-            // Everything in the folder was removed since its row was added.
-            nodes[unused].label = "(empty)".to_string();
-            nodes[unused].icon_image = icons.more.clone();
-            self.set_entry(unused, Entry::Placeholder);
+        if let Some(folder) = nodes.get_mut(idx) {
+            // Everything in it may have been removed since its row was made.
+            folder.may_have_children = false;
         }
     }
 
@@ -184,7 +131,6 @@ impl Rows {
         &mut self,
         nodes: &mut Vec<TreeNode>,
         tree: &Tree,
-        icons: &TreeIcons,
         node: NodeId,
     ) -> Option<usize> {
         if !tree.is_live(node) {
@@ -198,7 +144,7 @@ impl Rows {
                 let parent = tree.node(folder)?.parent();
                 return self.more.get(&parent).copied();
             };
-            self.populate(nodes, tree, icons, idx);
+            self.populate(nodes, tree, idx);
             nodes[idx].is_expanded = true;
         }
         match self.index.get(&node) {
@@ -211,24 +157,64 @@ impl Rows {
     }
 
     /// Expand `folder` and every folder above it.
-    pub fn expand_to(
-        &mut self,
-        nodes: &mut Vec<TreeNode>,
-        tree: &Tree,
-        icons: &TreeIcons,
-        folder: NodeId,
-    ) {
-        if let Some(idx) = self.reveal(nodes, tree, icons, folder) {
+    pub fn expand_to(&mut self, nodes: &mut Vec<TreeNode>, tree: &Tree, folder: NodeId) {
+        if let Some(idx) = self.reveal(nodes, tree, folder) {
             if self.node_at(idx) == Some(folder) {
-                self.populate(nodes, tree, icons, idx);
+                self.populate(nodes, tree, idx);
                 nodes[idx].is_expanded = true;
+            }
+        }
+    }
+
+    /// Follow `TreeView::remove_children` (old row → new row, `None` for removed rows):
+    /// drop the removed rows and renumber the rest. The folder whose rows were removed is
+    /// `folder` (old index); it is marked unpopulated, so opening it adds them again.
+    pub fn remap(
+        &mut self,
+        nodes: &mut [TreeNode],
+        tree: &Tree,
+        folder: usize,
+        map: &[Option<usize>],
+    ) {
+        let mut entries = vec![
+            Entry::More {
+                parent: NodeId::NONE
+            };
+            nodes.len()
+        ];
+        for (old, entry) in self.entries.iter().enumerate() {
+            if let Some(Some(new)) = map.get(old) {
+                if let Some(slot) = entries.get_mut(*new) {
+                    *slot = *entry;
+                }
+            }
+        }
+        self.entries = entries;
+        let renumber = |m: &mut HashMap<NodeId, usize>| {
+            m.retain(|_, idx| match map.get(*idx).copied().flatten() {
+                Some(new) => {
+                    *idx = new;
+                    true
+                }
+                None => false,
+            });
+        };
+        renumber(&mut self.index);
+        renumber(&mut self.more);
+        if let Some(new) = map.get(folder).copied().flatten() {
+            if let Some(Entry::Node { id, .. }) = self.entries.get(new).copied() {
+                self.entries[new] = Entry::Node {
+                    id,
+                    populated: false,
+                };
+                nodes[new].may_have_children = has_live_children(tree, id);
             }
         }
     }
 
     /// Where row `idx` is among the visible rows (top first), or `None` when a folder above
     /// it is collapsed. Same order as the `TreeView`'s own: depth first, siblings by
-    /// `order`.
+    /// `order`. O(rows); for tests and diagnostics (the `TreeView` caches its own).
     pub fn visible_position(nodes: &[TreeNode], idx: usize) -> Option<usize> {
         let mut kids: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
         let mut roots = Vec::new();
@@ -256,39 +242,36 @@ impl Rows {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_node(
         &mut self,
         nodes: &mut Vec<TreeNode>,
         tree: &Tree,
-        icons: &TreeIcons,
         id: NodeId,
         parent: Option<usize>,
         order: u32,
-        slot: Option<usize>,
     ) -> usize {
         let is_dir = tree.node(id).is_some_and(|n| n.is_dir());
-        let (icon, image) = if is_dir {
-            (NodeIcon::Folder, icons.folder.clone())
+        let (icon, glyph) = if is_dir {
+            (NodeIcon::Folder, NodeGlyph::new(fa::FOLDER, FOLDER_COLOR))
         } else {
-            (NodeIcon::File, icons.file.clone())
+            (NodeIcon::File, NodeGlyph::new(fa::FILE_O, FILE_COLOR))
         };
-        let mut node = TreeNode::new(row_label(tree, id), icon, parent, order);
-        node.icon_image = image;
-        let idx = place(nodes, slot, node);
-        let has_children = is_dir && tree.children(id).any(|c| tree.is_live(c));
-        let placeholder = has_children.then(|| {
-            let stand_in = TreeNode::new(String::new(), NodeIcon::File, Some(idx), 0);
-            let p = place(nodes, None, stand_in);
-            self.set_entry(p, Entry::Placeholder);
-            p
-        });
+        let mut row = TreeNode::new(tree.name(id), icon, parent, order);
+        row.icon_glyph = Some(glyph);
+        let size = tree.size(id);
+        row.secondary_text = Some(format_bytes(size));
+        let parent_id = tree.node(id).map_or(NodeId::NONE, |n| n.parent());
+        if !parent_id.is_none() {
+            row.fraction = Some(share(size, tree.size(parent_id)));
+        }
+        let has_children = is_dir && has_live_children(tree, id);
+        row.may_have_children = has_children;
+        let idx = push(nodes, row);
         self.set_entry(
             idx,
             Entry::Node {
                 id,
                 populated: !has_children,
-                placeholder,
             },
         );
         self.index.insert(id, idx);
@@ -297,50 +280,32 @@ impl Rows {
 
     fn set_entry(&mut self, idx: usize, entry: Entry) {
         if idx >= self.entries.len() {
-            self.entries.resize(idx + 1, Entry::Placeholder);
+            self.entries.resize(
+                idx + 1,
+                Entry::More {
+                    parent: NodeId::NONE,
+                },
+            );
         }
         self.entries[idx] = entry;
     }
 }
 
-/// `"Documents  ·  12.3 GB  ·  45.2%"`: name, size in the active mode, share of the parent
-/// folder. The scan root shows its path and size.
-pub fn row_label(tree: &Tree, id: NodeId) -> String {
-    let size = tree.size(id);
-    let parent = tree.node(id).map_or(NodeId::NONE, |n| n.parent());
-    if parent.is_none() {
-        return format!("{}  \u{b7}  {}", tree.name(id), format_bytes(size));
-    }
-    format!(
-        "{}  \u{b7}  {}  \u{b7}  {}",
-        tree.name(id),
-        format_bytes(size),
-        format_percent(size, tree.size(parent))
-    )
+fn has_live_children(tree: &Tree, id: NodeId) -> bool {
+    tree.children(id).any(|c| tree.is_live(c))
 }
 
-fn tree_node(
-    label: String,
-    icon: NodeIcon,
-    image: Option<agg_gui::IconImage>,
-    parent: usize,
-    order: u32,
-) -> TreeNode {
-    let mut node = TreeNode::new(label, icon, Some(parent), order);
-    node.icon_image = image;
-    node
+/// `part` as a fraction of `whole` (0 for an empty whole).
+fn share(part: u64, whole: u64) -> f32 {
+    if whole == 0 {
+        0.0
+    } else {
+        (part as f64 / whole as f64).clamp(0.0, 1.0) as f32
+    }
 }
 
-/// Put `node` into `slot` (reusing a stand-in's index) or append it. Returns its index.
-fn place(nodes: &mut Vec<TreeNode>, slot: Option<usize>, node: TreeNode) -> usize {
-    match slot.filter(|&s| s < nodes.len()) {
-        Some(s) => {
-            nodes[s] = node;
-            s
-        }
-        None => {
-            nodes.push(node);
-            nodes.len() - 1
-        }
-    }
+/// Append `row`, returning its index.
+fn push(nodes: &mut Vec<TreeNode>, row: TreeNode) -> usize {
+    nodes.push(row);
+    nodes.len() - 1
 }
