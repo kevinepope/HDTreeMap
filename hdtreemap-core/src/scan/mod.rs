@@ -22,6 +22,8 @@ mod fs_meta;
 mod progress;
 #[cfg(not(target_arch = "wasm32"))]
 mod walk;
+#[cfg(not(target_arch = "wasm32"))]
+mod walk_stats;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +35,7 @@ pub use progress::{ProgressSnapshot, ScanError, ScanErrors, ScanProgress, MAX_ER
 #[cfg(not(target_arch = "wasm32"))]
 pub use walk::NOTIFY_INTERVAL;
 
-use crate::model::{SizeMode, Tree};
+use crate::model::{ExtTable, SizeMode, Tree};
 
 /// A finished scan.
 #[derive(Clone, Debug)]
@@ -82,6 +84,12 @@ pub trait ScanSource {
     /// stay valid in the finished tree.
     fn partial(&self) -> Option<PartialScan<'_>> {
         None
+    }
+
+    /// The partial tree's totals per extension (the live legend and palette). The default
+    /// walks the partial tree; sources that keep running totals return those instead.
+    fn partial_extensions(&self) -> Option<ExtTable> {
+        self.partial().map(|p| ExtTable::from_tree(p.tree))
     }
 
     /// The size the partial tree reads and the finished tree is sorted by (the user's size

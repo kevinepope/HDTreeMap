@@ -100,11 +100,11 @@ impl Widget for FrameStats {
         self.worst = self.worst.max(frame);
         if self.since.elapsed() >= REPORT_EVERY {
             let avg = self.total.as_secs_f64() * 1000.0 / f64::from(self.frames);
-            eprintln!(
-                "hdtreemap stats: {} frames | layout+paint avg {avg:.2} ms, max {:.2} ms",
+            crate::render::stats_line(&format!(
+                "{} frames | layout+paint avg {avg:.2} ms, max {:.2} ms",
                 self.frames,
                 self.worst.as_secs_f64() * 1000.0
-            );
+            ));
             self.frames = 0;
             self.total = Duration::ZERO;
             self.worst = Duration::ZERO;

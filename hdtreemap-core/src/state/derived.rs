@@ -80,11 +80,11 @@ impl AppState {
             }
         })?;
         if stats_enabled() {
-            eprintln!(
-                "hdtreemap stats: extension table {:.1} ms | {} extensions",
+            crate::render::stats_line(&format!(
+                "extension table {:.1} ms | {} extensions",
                 started.elapsed().as_secs_f64() * 1000.0,
                 table.rows().len()
-            );
+            ));
         }
         *self.derived().zoom_extensions.borrow_mut() = Some((key, Rc::clone(&table)));
         Some(table)

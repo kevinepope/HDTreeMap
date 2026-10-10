@@ -5,7 +5,10 @@
 //! `agg-gui-web-shell`. This crate installs the theme and fonts and boots the shared app
 //! from `hdtreemap-core` with the simulated [`DemoPlatform`] (wrapped so web links open in
 //! a new tab): the browser cannot read the visitor's disks, so the demo shows a set of
-//! descriptive simulated drives. Settings (size mode, colours, splitters, recent drives)
+//! descriptive simulated drives. `?drive=<id>` in the page URL starts scanning that drive
+//! at once (as `--demo <id>` does natively), `?stats` logs `HDTREEMAP_STATS`-style timing
+//! lines to the console, and [`hdtreemap_status`] reports the screen
+//! and scan state for page automation (load and frame-time checks). Settings (size mode, colours, splitters, recent drives)
 //! are remembered in `localStorage` under [`SETTINGS_KEY`]; when storage is unavailable
 //! (private mode, blocked) the demo simply starts from the defaults.
 //!
@@ -28,7 +31,7 @@ use hdtreemap_core::platform::{
 };
 use hdtreemap_core::scan::ScanSource;
 use hdtreemap_core::settings::SettingsStore;
-use hdtreemap_core::state::ScanTarget;
+use hdtreemap_core::state::{ScanTarget, Screen};
 use hdtreemap_core::{build_app, install_theme_and_fonts, AppState, APP_TITLE};
 use wasm_bindgen::prelude::*;
 
@@ -68,10 +71,52 @@ impl WebShellHost for Host {
 }
 
 #[wasm_bindgen(inline_js = "export function hdtreemap_open_url(url) { \
-    return window.open(url, '_blank', 'noopener') !== null; }")]
+    return window.open(url, '_blank', 'noopener') !== null; } \
+    export function hdtreemap_url_param(name) { \
+    try { return new URLSearchParams(window.location.search).get(name); } \
+    catch (e) { return null; } } \
+    export function hdtreemap_console_log(line) { console.log(line); }")]
 extern "C" {
     /// Open `url` in a new browser tab; false when the browser blocked it.
     fn hdtreemap_open_url(url: &str) -> bool;
+    /// The page URL's parameter `name` (`None` when absent; `Some("")` for a bare flag).
+    fn hdtreemap_url_param(name: &str) -> Option<String>;
+    /// `console.log(line)`.
+    fn hdtreemap_console_log(line: &str);
+}
+
+thread_local! {
+    /// The app's state, for [`hdtreemap_status`].
+    static STATE: std::cell::RefCell<Option<AppState>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The app's state for page automation, as JSON: `{"screen": "start" | "scanning" |
+/// "results", "files": .., "live_ticks": .., "rasters": ..}` (files scanned so far, or in
+/// the result).
+#[wasm_bindgen]
+pub fn hdtreemap_status() -> String {
+    STATE.with(|s| {
+        let state = s.borrow();
+        let Some(state) = state.as_ref() else {
+            return "{\"screen\": \"loading\"}".to_string();
+        };
+        let screen = match state.screen() {
+            Screen::Start => "start",
+            Screen::Scanning(_) if state.is_scanning() => "scanning",
+            Screen::Scanning(_) | Screen::Results(_) => "results",
+        };
+        let files = state
+            .progress()
+            .map(|p| p.files)
+            .or_else(|| state.with_result(|r, _| r.tree.file_count()))
+            .unwrap_or(0);
+        format!(
+            "{{\"screen\": \"{screen}\", \"files\": {files}, \"live_ticks\": {}, \
+             \"rasters\": {}}}",
+            state.live_ticks(),
+            state.map_counters().rasters
+        )
+    })
 }
 
 /// The browser's platform: the simulated [`DemoPlatform`], except that web links really
@@ -122,16 +167,28 @@ pub fn main() -> Result<(), JsValue> {
         .with_redraw_policy(RedrawPolicy::Reactive);
     // Errors are already on the console and in the shell's fatal panel; returning them
     // also fails the wasm start so the page's boot code sees it.
+    // `?stats`: timing lines (layout, raster, live ticks, frames) in the console.
+    if hdtreemap_url_param("stats").is_some() {
+        hdtreemap_core::render::enable_stats(hdtreemap_console_log);
+    }
     start(config, |init| {
         let fonts = install_theme_and_fonts(init.device_scale()).map_err(WebShellError::app)?;
         let state = AppState::new();
         state.use_settings_store(Box::new(BrowserSettings(LocalStorageSettings::new(
             SETTINGS_KEY,
         ))));
+        let platform = Rc::new(WebPlatform::default());
+        let drive = hdtreemap_url_param("drive").unwrap_or_default();
+        if let Some(volume) = platform.list_volumes().into_iter().find(|v| v.id == drive) {
+            let target = ScanTarget::volume(&volume);
+            let source = platform.scan_source(&target);
+            state.start_scan(target, source);
+        }
+        STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
         let host = Host {
             state: state.clone(),
         };
-        let app = build_app(state, Rc::new(WebPlatform::default()), fonts);
+        let app = build_app(state, platform, fonts);
         Ok((app, host))
     })
     .map_err(|err| JsValue::from_str(&err.to_string()))

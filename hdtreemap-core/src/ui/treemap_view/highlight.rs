@@ -102,13 +102,13 @@ impl TreemapView {
             });
             self.state.count_raster();
             if stats_enabled() {
-                eprintln!(
-                    "hdtreemap stats: highlight raster {:.1} ms | {}x{} | {} files",
+                crate::render::stats_line(&format!(
+                    "highlight raster {:.1} ms | {}x{} | {} files",
                     ms(started),
                     key.width,
                     key.height,
                     made.as_ref().map_or(0, |d| d.files)
-                );
+                ));
             }
             self.highlight.dimmed = made;
         }

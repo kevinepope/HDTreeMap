@@ -27,6 +27,7 @@ use web_time::Instant;
 
 use super::assemble::{Failure, Record};
 use super::fs_meta;
+use super::walk_stats::WalkStats;
 use super::ScanProgress;
 use crate::model::{NodeFlags, Sizes};
 
@@ -57,6 +58,7 @@ struct Filter {
     /// APFS clone families already counted in full (`scan/apfs.rs`).
     clones: Mutex<HashSet<CloneKey>>,
     progress: Arc<ScanProgress>,
+    stats: Arc<WalkStats>,
 }
 
 /// Walk `root` (resolved), handing each entry's [`Record`] to `sink` in depth-first order
@@ -69,7 +71,8 @@ pub(super) fn walk(
     notify: Option<&UiQueue>,
     sink: &mut dyn FnMut(Record) -> bool,
 ) {
-    let walk = build_walk(root, progress);
+    let (walk, stats) = build_walk(root, progress);
+    let started = Instant::now();
     progress.set_current_path(&root.to_string_lossy());
     let mut last_notify = Instant::now();
     let mut since_check = 0u32;
@@ -107,6 +110,9 @@ pub(super) fn walk(
         if !sink(record) {
             break;
         }
+    }
+    if stats.enabled() {
+        stats.report(started.elapsed());
     }
 }
 
@@ -173,7 +179,7 @@ fn entry_record(
 
 /// The configured jwalk walk over `root`: hidden files included, symlinks not followed, its
 /// own rayon pool, and the per-entry filter below.
-fn build_walk(root: &Path, progress: &Arc<ScanProgress>) -> Walk {
+fn build_walk(root: &Path, progress: &Arc<ScanProgress>) -> (Walk, Arc<WalkStats>) {
     let (devices, skip) = match fs_meta::mount_plan(root) {
         // Linux: the mount table names every mount point to skip; no device check.
         Some(skip) => (Vec::new(), skip),
@@ -195,16 +201,19 @@ fn build_walk(root: &Path, progress: &Arc<ScanProgress>) -> Walk {
         seen_links: Mutex::new(HashSet::new()),
         clones: Mutex::new(HashSet::new()),
         progress: Arc::clone(progress),
+        stats: Arc::new(WalkStats::new()),
     });
+    let stats = Arc::clone(&filter.stats);
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    Walk::new(root)
+    let walk = Walk::new(root)
         .skip_hidden(false)
         .follow_links(false)
         .sort(false)
         .parallelism(Parallelism::RayonNewPool(threads))
         .process_read_dir(move |depth, dir, _state, children| {
             filter.process(depth.is_none(), dir, children);
-        })
+        });
+    (walk, stats)
 }
 
 /// What the filter needs to know about one entry, from `lstat` or (macOS) a bulk read.
@@ -241,8 +250,12 @@ impl EntryMeta {
     /// `b` (from a bulk read of the folder holding `path`); a file that may share blocks
     /// costs one more call, for its clone family.
     #[cfg(target_os = "macos")]
-    fn from_bulk(path: &Path, b: &super::apfs::BulkEntry) -> Self {
+    fn from_bulk(path: &Path, b: &super::apfs::BulkEntry, stats: &WalkStats) -> Self {
         use super::apfs::Kind;
+        WalkStats::add(&stats.bulk_entries, 1);
+        if b.may_share_blocks() {
+            WalkStats::add(&stats.clone_lookups, 1);
+        }
         let is_file = b.kind == Kind::File;
         Self {
             is_symlink: b.kind == Kind::Symlink,
@@ -270,6 +283,7 @@ impl Filter {
             children.clear();
             return;
         }
+        let started = self.stats.enabled().then(Instant::now);
         // macOS: one bulk read for the whole directory instead of an lstat per entry; it
         // also brings the APFS clone facts (`scan/apfs.rs`).
         #[cfg(target_os = "macos")]
@@ -287,12 +301,13 @@ impl Filter {
             let known = bulk
                 .as_ref()
                 .and_then(|b| b.get(entry.file_name.as_os_str()))
-                .map(|b| EntryMeta::from_bulk(&path, b));
+                .map(|b| EntryMeta::from_bulk(&path, b, &self.stats));
             #[cfg(not(target_os = "macos"))]
             let known: Option<EntryMeta> = None;
             let meta = match known {
                 Some(meta) => meta,
                 None => {
+                    WalkStats::add(&self.stats.lstat_entries, 1);
                     let read = if is_root {
                         fs::metadata(&path)
                     } else {
@@ -343,6 +358,9 @@ impl Filter {
             }
         }
         children.retain(|c| c.as_ref().map_or(true, |e| !e.client_state.duplicate));
+        if let Some(started) = started {
+            self.stats.folder(dir, children.len(), started.elapsed());
+        }
     }
 }
 
