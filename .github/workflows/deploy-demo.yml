@@ -1,0 +1,67 @@
+# Builds the browser demo (hdtreemap-wasm + demo/) and publishes it to GitHub Pages at
+# https://larsbrubaker.github.io/HDTreeMap/ on every push to main.
+name: Deploy demo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sibling agg-gui checkout — required by [patch.crates-io] and the agg-gui-web-shell
+      # path dependency in Cargo.toml. See CLAUDE.md.
+      - name: Clone agg-gui sibling
+        run: git clone --depth 1 https://github.com/larsbrubaker/agg-gui.git ../agg-gui
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build wasm
+        run: |
+          wasm-pack build hdtreemap-wasm \
+            --target web \
+            --out-dir ../demo/public/pkg \
+            --no-typescript
+
+      - name: Build demo bundle
+        working-directory: demo
+        run: |
+          bun install
+          bun run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
