@@ -6,9 +6,25 @@
     <meta name="theme-color" content="#1b1b1b" />
     <meta
       name="description"
-      content="HDTreeMap: a disk-usage treemap viewer built on agg-gui, running in the browser on simulated drives."
+      content="HDTreeMap: a small, fast disk-usage treemap viewer for macOS, Windows and Linux, built in Rust on agg-gui. This live demo scans simulated drives in your browser."
     />
-    <title>HDTreeMap — disk usage treemap (demo)</title>
+    <title>HDTreeMap — disk usage treemap viewer (live demo)</title>
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="HDTreeMap — disk usage treemap viewer" />
+    <meta
+      property="og:description"
+      content="See what fills your disk: a cushion treemap with a linked folder tree and file-type legend. Native for macOS, Windows and Linux; this demo runs on simulated drives."
+    />
+    <meta property="og:url" content="https://larsbrubaker.github.io/HDTreeMap/" />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/larsbrubaker/HDTreeMap/main/readme_hero.png"
+    />
+    <meta property="og:image:width" content="1800" />
+    <meta property="og:image:height" content="1200" />
+    <meta name="twitter:card" content="summary_large_image" />
     <style>
       /* Bootstrap-only styling. All visible UI is painted by agg-gui into the canvas
          (CLAUDE.md: all UI through agg-gui). This page only places the canvas. */
