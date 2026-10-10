@@ -5,7 +5,7 @@ You point it at a drive or folder, it scans the folder in parallel, and it shows
 file as a shaded rectangle whose area is proportional to the file's size. The goal is
 a small, fast and clean tool, not a WinDirStat clone with every feature.
 
-Status: **approved 2026-10-10 — building M0→M6.** License MIT. Repo github.com/larsbrubaker/HDTreeMap (rust-apps submodule).
+Status: **approved 2026-10-10 — M0–M5 done, M6 next.** License MIT. Repo github.com/larsbrubaker/HDTreeMap (rust-apps submodule).
 
 ---
 
@@ -127,6 +127,41 @@ Scanning is behind a `ScanSource` abstraction: `FsScanner` (native only, `cfg(no
   Unix only; Windows junctions and mount points are not followed because std reports them
   as symlinks. Names are stored as UTF-8 (lossy for non-UTF-8 names).
 - **Design choice:** v1 shows a progress screen and then the full map, which keeps the model simple. Showing the map live while scanning (as SpaceSniffer does) is a stretch goal; the arena design doesn't rule it out.
+  *Superseded (M5): the map is live during the scan; see the as-built notes below.*
+- *As built (M5), the live map:* the walk (`scan/walk.rs`) turns entries into records; an
+  `Assembler` (`scan/assemble.rs`) builds the tree from them. `FsScanner` sends records
+  from its worker in batches (4,096 or 50 ms) over a channel and applies them in `poll` on
+  the UI thread, so the UI owns the one growing tree and lays it out with no locks or
+  copies (`ScanSource::partial`); `scan_blocking` applies them inline. Both sources keep
+  per-extension totals as files arrive and sort the finished tree a time slice per poll.
+  `AppState::with_result` hands views a `ScanView` (live or finished), so every view works
+  on the partial tree unchanged; a **live tick** (`state/live.rs`) bumps the tree version
+  at most every 400 ms, longer if the refresh (extension totals, layout, raster, rows)
+  would take over 30% of the interval. A tick's frame skips the scan's own step, and the
+  map rasterises a tick's layout on the next frame. The results view replaces the scan
+  screen: a scan strip shows the counters and Cancel; Rescan and Move to Trash wait; at
+  the end the screen becomes `Results` without a rebuild, keeping zoom and selection.
+  Measured on `~/Development` (1.05 M files, 10-core Apple Silicon, load 6-7): live
+  8.6-8.8 s vs blocking 8.3-8.5 s (+3-4%), refresh 20-23 ms mean, longest frame 36-42 ms
+  at 2400×1500. Web demo, archive server (1.56 M files) in headless Chrome at 1600×1000:
+  paced scan 18.2 s, frames p50 16.7 ms, p99 33 ms, longest 33-50 ms (was 133 ms before
+  the slicing), at most one task over 50 ms.
+- *As built (M5), macOS metadata:* a folder's entries come from one `getattrlistbulk`
+  (`scan/apfs.rs`) instead of an `lstat` each; mount points, firmlinks and entries with
+  errors still use `lstat`. Files with `EF_MAY_SHARE_BLOCKS` get one `getattrlist` for
+  `ATTR_CMNEXT_CLONEID` and `ATTR_CMNEXT_PRIVATESIZE`, and a clone family is counted once
+  (first member in full, others at their private size), like hard links. Asking the bulk
+  read for those two for every entry doubled the system time, so it doesn't.
+- *As built (M5), whole-disk speed:* `/` on this Mac (2.81 M files, 1.02 M folders,
+  load 7-9): 37 s, both M4 and M5; M4's earlier 19.5 min was a cold cache under very
+  heavy load. 1.0 M of those entries (600 k folders) are one temp folder of test
+  output, which alone takes 23-25 s and is disk-bound: `du` needs 38 s for it at 44%
+  CPU, and the kernel's vnode cache (263 k) is far smaller than the disk, so every
+  whole-disk scan is cold. Sampling shows jwalk's pool threads mostly waiting on the
+  mutex of rayon's `par_bridge`; reading big folders in parallel chunks was tried and
+  was slower (reverted). A walker without jwalk's ordered queue might gain more; see §5.
+  Nothing on the disk needed skipping: `.Spotlight-V100` and `/private/var/vm` are
+  counted (by size), `/dev` is another device, and no file is ever opened.
 
 ### 3.3 Layout (`layout/`)
 - Squarified layout from the zoom root down to the visible pixel size. Recursion stops when a rectangle is smaller than about 1 px², and the leftover area is drawn as one aggregated block.
@@ -147,6 +182,11 @@ Scanning is behind a `ScanSource` abstraction: `FsScanner` (native only, `cfg(no
 - The buffer is drawn with `draw_image_rgba_arc` (the texture is cached by `Arc` pointer). It is only re-rasterised when the size, zoom root, size mode, colour mode or tree changes.
 - Hover and selection outlines and the extension highlight are drawn on top as vector strokes in `paint_overlay`, so moving the mouse never re-rasterises the map.
 - Palette: 12–16 hand-picked distinct hues for the top extensions and neutral grey for the rest, the same idea as WinDirStat.
+- *As built (M5):* **Colour By** top-level folder gives the zoom root's 16 biggest
+  children a hue each, shared by everything inside them (blocks at 70% brightness), grey
+  for the rest; the palette is cached per tree version, scheme and (by folder) zoom root,
+  and switching only re-rasterises. The extension highlight dims on top of either scheme.
+  The legend lists the top folders in that mode.
 - Performance target: under 10 ms per frame when nothing has changed (agg-gui rule), and under about 150 ms to re-rasterise a 4K map with a million files. Both are measured with a stats env var, following the `CRITTERS_STATS` pattern.
 - *As built (M2):* `I = Ia + max(0, Is·n·L)` with `Ia = 0.15`, `Is = 1 − Ia`, `L` ∝ (−1, −1, 10),
   times a 1.2 brightness gain, clamped. Flat mode darkens each rectangle's right and bottom
@@ -207,6 +247,15 @@ the two lists read as one sidebar.
   - Native shell (GPU), `HDTREEMAP_STATS`, archive server with `.jpg` highlighted, about
     1720×1440 px map: 1.25 ms average CPU layout+paint per frame.
 
+*As built (M5):* settings (`settings.rs`) are one JSON blob of size mode, shading, colour
+scheme, splitter ratios and the five most recent scan targets: natively
+`<config dir>/HDTreeMap/settings.json` (and `window.json` through agg-gui-shell's
+`WindowBoundsStore`), on the web `localStorage` through agg-gui-web-shell's
+`LocalStorageSettings`. AppState writes it from the shells' idle hooks through agg-gui's
+`AutoSave` (on change, never mid-drag; flushed on exit or page hide); unknown or broken
+values fall back to defaults. The start screen lists the recent scans. The folder tree's
+root row shows the drive or folder name, the full path as its tooltip.
+
 *As built (M4):* the root is a `Stack`: the menu bar (unless the shell installed the
 macOS system one) over the screen, then the overlays: a `ContextMenuHost` that opens an
 agg-gui `PopupMenu` for `AppState::request_context_menu` (from the map and the tree), the
@@ -252,7 +301,7 @@ Each milestone ends green: fmt, clippy `-D warnings` and tests.
 3. **M2 – Treemap** *(done)*: squarify, cushion rasteriser, `TreemapView` with hover and status bar, progress screen, and zoom in and out with the breadcrumb. Unit tests for layout invariants and a golden-image test for the rasteriser.
 4. **M3 – Linked views** *(done)*: folder tree and extension legend, all synced with the map selection, plus highlight-by-extension.
 5. **M4 – Actions** *(done)*: context menu, reveal, open, copy path, rescan folder, Move to Trash with confirmation, and the menu bar items.
-6. **M5 – Polish and perf**: measure on a real full-disk scan of each OS, **live map during the scan**, remembered window bounds and settings, and the colour-by-top-folder mode.
+6. **M5 – Polish and perf** *(done)*: measure on a real full-disk scan of each OS, **live map during the scan**, remembered window bounds and settings, and the colour-by-top-folder mode. *As built:* live map, APFS clone accounting and bulk metadata (§3.2), colour by top-level folder (§3.4), settings and Recent (§3.5); measured on macOS only (Linux and Windows full-disk runs are still to do).
 7. **M6 – Ship**: README with a hero screenshot, a GitHub release workflow (zipped binaries for all three OSes, a macOS `.app` via `cargo-bundle`), and the rust-apps README entry and submodule.
 
 ## 5. Risks and open questions
@@ -264,4 +313,9 @@ Each milestone ends green: fmt, clippy `-D warnings` and tests.
 - **macOS privacy**: without Full Disk Access, `~/Library` and similar folders return permission errors. We report them clearly; we don't try to get around them.
 - **Windows sizes**: allocated size for compressed, sparse or OneDrive placeholder files varies. Use `GetCompressedFileSizeW` and document the behaviour.
 - **Scanning speed vs WizTree**: we accept the speed of a parallel walk. Reading the MFT is a possible v2 item.
+  *M5:* on macOS a whole disk is disk-bound in its biggest trees (§3.2 as-built notes).
+  jwalk hands out directory reads through one mutex (rayon `par_bridge`), which is where
+  its threads wait on wide trees of small folders; a walker of our own (rayon scope per
+  folder, records keyed by folder token instead of depth order) is the next thing to try
+  if whole-disk speed matters more.
 - **wasm is single-threaded**: the demo scan and the rasteriser must be time-sliced or fast enough serially.

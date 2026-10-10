@@ -10,16 +10,19 @@ against simulated drives. It never reads anything on your computer.
 
 ## Status
 
-Early development. Milestones M0–M4 are done: pick a drive or folder, watch the parallel
-scan, explore the result as a cushion treemap linked to a folder tree and an extension
-legend, and act on what you find (reveal, open, copy the path, rescan a folder, Move to
-Trash). Polish and performance come next. See [docs/PLAN.md](docs/PLAN.md) for the full
+Early development. Milestones M0–M5 are done: pick a drive or folder and watch the map
+fill in while the parallel scan runs, explore the result as a cushion treemap linked to
+a folder tree and a legend, and act on what you find (reveal, open, copy the path,
+rescan a folder, Move to Trash). Packaging and releases come next. See [docs/PLAN.md](docs/PLAN.md) for the full
 plan.
 
 ## Features
 
-- Parallel scan with live progress and Cancel. Stays on one filesystem, doesn't follow
-  symlinks, and counts hard links once. Unreadable folders are counted, not fatal.
+- Parallel scan with a live map: the treemap, folder tree and legend fill in as the scan
+  runs, with counters, progress and Cancel above them; you can hover and zoom
+  meanwhile. Stays on one filesystem, doesn't follow symlinks, and counts hard links
+  (and, on macOS, APFS clones) once. Unreadable folders are counted, not fatal. A whole
+  Mac disk of 2.8 M files took 37 s on an Apple Silicon machine.
 - Squarified treemap with cushion shading (or flat), coloured by file extension; folders
   too small to open and leftover small files show as grey blocks, so all space is shown.
 - Hover for the path, size and share of each item (status bar and tooltip); click to
@@ -29,6 +32,10 @@ plan.
   select or hover in either one and the other follows. Double-click a folder to zoom.
 - An extension legend with the map's colours, sizes, shares and file counts for the
   current folder. Click an extension to highlight its files on the map.
+- Colour the map by file type or by top-level folder (each folder's contents share its
+  hue; the legend then lists the folders).
+- Remembers the size mode, colours, shading, splitter positions, window size and the
+  last five folders and drives you scanned (a Recent list on the start screen).
 - "Size on disk" or apparent size, switchable without rescanning.
 - Status bar with totals, unreadable items and free space.
 - Right-click any file or folder (on the map or in the tree): Reveal in Finder / Show in
@@ -49,9 +56,17 @@ plan.
   opening every file during the scan to find the few with more than one link would slow
   it down a lot, so a multiply-linked file (rare outside the WinSxS component store) is
   counted at each of its paths.
-- **APFS clones are counted at each copy.** macOS can clone a file so two copies share
-  their blocks until one changes; the scanner sees two files and counts the space twice
-  (a folder of cloned apps can make a scan of `/` exceed the disk's used space).
+- **APFS clones that have since changed are counted at each copy.** macOS can clone a
+  file so two copies share their blocks. HDTreeMap counts a family of clones once (the
+  first copy it meets in full, the others at the bytes only they hold). A clone edited
+  after cloning gets a clone id of its own, though, and APFS does not say which file it
+  still shares blocks with, so its shared blocks are counted again. Space held only by
+  Time Machine local snapshots, and purgeable space, is not shown, so a scan of `/`
+  reads a little under the disk's used space.
+- **Cloud files** (iCloud Drive, File Provider) that are not downloaded take no space and
+  show as 0 bytes on disk. The scanner reads metadata only and never opens a file, so it
+  never triggers a download; reading a folder that is itself only in the cloud may make
+  macOS fetch its list of names.
 - Names that are not valid Unicode are shown with replacement characters. Reveal, Open
   and Move to Trash refuse such items (and everything inside them), because the shown
   path is not the real one; use your file manager for them.

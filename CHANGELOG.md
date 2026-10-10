@@ -5,6 +5,26 @@ All notable changes to HDTreeMap are documented here.
 ## Unreleased
 
 ### Added
+- M5 live map. The results view opens as soon as a scan starts and the map, folder tree,
+  legend and totals fill in while it runs, refreshed at most every 400 ms (slower when a
+  refresh would take over 30% of the time between them). A strip under the toolbar shows
+  the counters, the folder being read, a progress bar for drives, and Cancel. Hover,
+  tooltips, selection and zoom work during the scan; Rescan and Move to Trash wait for
+  it. When the scan finishes the same view shows the sorted tree, keeping the zoom and
+  selection. The old scan screen is gone.
+- Colour By (View menu, and a By Type / By Folder switch in the toolbar): colour the map
+  by file type, or by the top-level folders of the zoom root, each with its own hue that
+  everything inside it shares. By folder, the legend lists those folders; clicking one
+  selects it.
+- Remembered settings: size mode, cushions, colour scheme, splitter positions and the
+  last five scanned folders and drives (a Recent list on the start screen), in
+  `<config dir>/HDTreeMap/settings.json` (localStorage on the web). The native window
+  size is remembered too. `HDTREEMAP_SETTINGS_DIR` moves the files.
+- The web demo takes `?drive=<id>` (scan that simulated drive at once) and `?stats`
+  (timing lines in the console).
+- `HDTREEMAP_STATS` also reports how a scan read its metadata and its slowest folders;
+  `examples/bench_live_scan` times a live scan against a blocking one;
+  `HDTREEMAP_SCREENSHOT_SHOW=color-folder`.
 - M4 actions. Right-click a file or folder on the map or in the folder tree for Reveal in
   Finder / Show in Explorer / Show in File Manager, Open, Copy Path, Zoom Here, Zoom to
   Parent, Rescan Folder and Move to Trash…. Moving to the trash asks first (name, size,
@@ -71,6 +91,16 @@ All notable changes to HDTreeMap are documented here.
 - CI on Linux, macOS and Windows (fmt, clippy, tests), a wasm check, and a Pages deploy.
 
 ### Changed
+- macOS: APFS clones are counted once. A file that may share blocks with another
+  (`EF_MAY_SHARE_BLOCKS`) is looked up for its clone id and private size; the first
+  member of a clone family counts in full, the others at their private size. Folder
+  metadata is read in bulk (`getattrlistbulk`) instead of one `lstat` per entry:
+  `~/Development` (1.05 M files) scans in 8.4 s instead of 9.7 s and 504 GB on disk
+  instead of 527 GB; a whole-disk scan of `/` reports 681 GB instead of 955 GB (the data
+  volume has 689 GB in use).
+- The tree is now assembled on the UI thread from batches the scanning thread sends, and
+  sorted a time slice at a time when the scan ends, so no frame stalls on a big tree (the
+  web demo's longest frame on the 1.5 M-file archive server: 133 ms before, 50 ms now).
 - The folder tree uses agg-gui's new TreeView API (events, programmatic selection and
   scrolling, glyph icons, sizes as right-aligned text with a share bar); selecting on the
   map is faster (8.7 ms from 12.4 ms on the archive server, software renderer).
@@ -81,6 +111,9 @@ All notable changes to HDTreeMap are documented here.
   scanned and listed as drives, and bind mounts are skipped instead of counted twice.
 
 ### Fixed
+- The folder tree's root row showed the whole scanned path; it shows the drive's or the
+  folder's own name, with the path as a tooltip.
+- The web demo's start screen offered to choose a folder, which the demo cannot do.
 - Scanning a single file gave it a doubled path (`/a/movie.mkv/movie.mkv`).
 - Names that are not valid Unicode are flagged; actions refuse them.
 - Long paths on Windows lost their allocated size; Show in Explorer now quotes the path.

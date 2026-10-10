@@ -36,35 +36,48 @@ hdtreemap-core/     rlib: everything testable, no platform code
   src/platform/demo.rs  DemoPlatform: the web demo's simulated drives
   src/platform/mountinfo.rs  Linux /proc/self/mountinfo: parse, mounts to skip (pure)
   src/model/          arena Tree (40-byte Node, LOSSY_NAME flag, exact_path), TreeBuilder
-                      (name-slab limit), SizeMode, ExtTable; splice.rs: replace_subtree
-  src/scan/           ScanSource, ScanProgress/ScanErrors, FsScanner (native: jwalk on a
-                      worker thread); fs_meta.rs: per-OS metadata, root resolution, mounts,
-                      macOS firmlinks
+                      (name-slab limit, running extension totals, time-sliced sort),
+                      SizeMode, ExtTable; splice.rs: replace_subtree
+  src/scan/           ScanSource (poll, partial tree), ScanProgress/ScanErrors; native:
+                      walk.rs (jwalk walk -> records), assemble.rs (records -> tree),
+                      fs.rs (FsScanner: worker sends record batches, poll assembles),
+                      fs_meta.rs (per-OS metadata, root resolution, mounts, firmlinks),
+                      apfs.rs (macOS bulk metadata, clone accounting), walk_stats.rs
+  src/settings.rs     remembered settings + recent scans as JSON; SettingsStore trait
   src/demo_fs/        DemoScanner + per-drive recipes for the simulated drives (all targets)
   src/layout/         squarified cushion layout (Y-down physical pixels), aggregates, hit grid
-  src/render/         palette + cushion rasteriser (rayon row bands natively), HDTREEMAP_STATS
-  src/state.rs        AppState (screen, running scan, finished result); state/pump.rs polls
-                      scans and folder rescans once per frame (an agg-gui ui_thread drain
-                      hook); view.rs: zoom, hover, selection, highlight, shading, versions;
+  src/render/         palette (by type or top folder) + cushion rasteriser (rayon row bands
+                      natively), HDTREEMAP_STATS (stats_line; a shell can redirect it)
+  src/state.rs        AppState (screen, running scan, finished result, with_result over a
+                      live or finished ScanView); state/pump.rs polls scans and folder
+                      rescans once per frame (an agg-gui ui_thread drain hook); live.rs:
+                      throttled live ticks of the partial map; persist.rs: settings and
+                      recent scans; view.rs: zoom, hover, selection, highlight, shading,
+                      colour scheme, size mode, versions;
                       derived.rs: shared palette and zoom-root ExtTable; volumes.rs: cached
                       volume list; edits.rs: remove_node, folder rescan + splice;
                       notices.rs: toasts, trash/About sheets, context-menu requests, quit
   src/ui/             widgets. mod.rs: root Stack (menu bar + screen, overlays);
-                      start_screen, scan_screen, main_view (toolbar, breadcrumb, splitters,
-                      status bar), treemap_view/ (custom TreemapView; geometry.rs raster
-                      size, highlight.rs), folder_tree/ (TreeView wrapper, rows.rs lazy
+                      start_screen (drives, Recent), main_view (toolbar, breadcrumb,
+                      scan_strip while scanning, splitters, status bar; shown live from
+                      the start of a scan), treemap_view/ (custom TreemapView;
+                      geometry.rs raster size, highlight.rs), folder_tree/ (TreeView wrapper, rows.rs lazy
                       rows), ext_legend.rs (Table), describe.rs; commands.rs (menu
                       commands), node_actions.rs (reveal/open/copy/zoom/rescan/trash),
                       menus.rs (menu spec, in-window MenuBar, shortcuts), context_menu.rs
                       (PopupMenu host), sheets.rs (trash confirm, About), toast.rs
   tests/              headless UI tests (common/ harness with a recording FakePlatform),
-                      scanner tests, actions/menus tests, file_line_count
-  examples/           bench_treemap (layout/raster timing), bench_views (whole-frame timing)
+                      scanner tests, live_map, color_by, actions/menus tests,
+                      file_line_count
+  examples/           bench_treemap (layout/raster timing), bench_views (whole-frame
+                      timing), bench_live_scan (live vs blocking scan)
 hdtreemap-native/   bin `hdtreemap`: agg-gui-shell + NativePlatform (sysinfo, rfd, opener, trash),
                     CLI (`--demo [ID]`, `--dump-top N [PATH | --demo ID]`, `--highlight EXT`),
                     menu_bar.rs (macOS system menu from the core's spec), show.rs
-                    (HDTREEMAP_SCREENSHOT_SHOW input replay), a ShellHost for Quit
-hdtreemap-wasm/     cdylib: agg-gui-web-shell + WebPlatform (DemoPlatform that opens links)
+                    (HDTREEMAP_SCREENSHOT_SHOW input replay), persist.rs (settings.json,
+                    window.json in the OS config dir), a ShellHost for Quit and saving
+hdtreemap-wasm/     cdylib: agg-gui-web-shell + WebPlatform (DemoPlatform that opens links),
+                    localStorage settings, ?drive=ID / ?stats, hdtreemap_status() export
 demo/               static page + bun/vite bundle for GitHub Pages
 ```
 
@@ -111,7 +124,10 @@ wasm-pack build hdtreemap-wasm --target web --out-dir ../demo/public/pkg --no-ty
 `HDTREEMAP_SCREENSHOT_SHOW=context-menu|trash|menu|about|color-folder` opens that UI first (with
 `HDTREEMAP_IN_WINDOW_MENU=1` for the in-window bar on macOS). Never confirm a trash on real
 files while testing: point it at a temporary folder.
-`HDTREEMAP_STATS=1` prints treemap layout / raster times and per-frame layout+paint time.
+`HDTREEMAP_STATS=1` prints treemap layout / raster times, per-frame layout+paint time,
+live ticks, and a scan's slowest folders (`?stats` on the web, to the console).
+`HDTREEMAP_SETTINGS_DIR=dir` keeps settings and the window size there (screenshot runs
+without it use neither).
 `cargo run --release -p hdtreemap-native -- --dump-top 15 PATH` checks the scanner headless.
 Run `scripts/pre-commit-check.sh` (or `.ps1`) before every commit; it mirrors CI.
 
