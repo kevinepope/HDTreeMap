@@ -259,8 +259,8 @@ root row shows the drive or folder name, the full path as its tooltip.
 *As built (M4):* the root is a `Stack`: the menu bar (unless the shell installed the
 macOS system one) over the screen, then the overlays: a `ContextMenuHost` that opens an
 agg-gui `PopupMenu` for `AppState::request_context_menu` (from the map and the tree), the
-toasts (agg-gui has none; `ui/toast.rs` paints them), and the Move to Trash and About
-`ModalSheet`s. The menus are described once as data (`ui/menus.rs`) and turned into the
+toasts, and the Move to Trash and About `ModalSheet`s. (*M6:* the toasts moved onto
+agg-gui's `ToastHost` / `Toasts`, which wraps the whole root; `ui/toast.rs` is gone.) The menus are described once as data (`ui/menus.rs`) and turned into the
 in-window `MenuBar`, the macOS `MenuBarModel` (in `hdtreemap-native`) and the shortcut
 table; `ui/commands.rs` runs, enables and checks every command, `ui/node_actions.rs`
 the per-item ones. Move to Trash calls `PlatformServices::trash`, then

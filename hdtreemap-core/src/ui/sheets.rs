@@ -180,7 +180,7 @@ pub fn about_sheet(commands: &Commands, fonts: &Fonts) -> Box<dyn Widget> {
             let state = link_commands.state();
             match link_commands.platform().open_url(GITHUB_URL) {
                 Ok(ActionOutcome::Done) => {}
-                Ok(ActionOutcome::Simulated(note)) => state.notify(note),
+                Ok(ActionOutcome::Simulated(note)) => state.notify_info(note),
                 Err(err) => state.notify_error(err.message),
             }
         },

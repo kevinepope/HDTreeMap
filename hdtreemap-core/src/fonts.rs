@@ -62,8 +62,6 @@ pub mod fa {
     pub const POWER_OFF: char = '\u{f011}';
     /// fa-github — View on GitHub.
     pub const GITHUB: char = '\u{f09b}';
-    /// fa-check-circle — a toast reporting success.
-    pub const CHECK_CIRCLE: char = '\u{f058}';
     /// fa-eraser — Clear Highlight.
     pub const ERASER: char = '\u{f12d}';
     /// fa-history: the start screen's recent scans.
@@ -125,7 +123,6 @@ mod tests {
             fa::TRASH,
             fa::POWER_OFF,
             fa::GITHUB,
-            fa::CHECK_CIRCLE,
             fa::ERASER,
         ] {
             assert!(

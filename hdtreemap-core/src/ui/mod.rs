@@ -2,8 +2,10 @@
 //!
 //! The root ([`build_root`]) is a `Stack`: the app column (the in-window menu bar, unless
 //! the shell installed a native one, over the current screen), then the overlays: the
-//! context-menu host, the toasts, and the Move to Trash and About sheets. All of it sits
-//! in [`menus::CommandKeys`], which runs the menu commands' shortcuts. The screen is a
+//! context-menu host and the Move to Trash and About sheets. All of it sits in
+//! [`menus::CommandKeys`], which runs the menu commands' shortcuts, inside agg-gui's
+//! `ToastHost`, which paints the state's toasts (`AppState::notify`) over everything in
+//! the bottom-right corner, clear of the status bar. The screen is a
 //! `Rebuilder` keyed on [`AppState::version`]: when the state switches screens it rebuilds
 //! the matching one on the next layout.
 //!
@@ -14,7 +16,7 @@
 //!   tree ([`folder_tree`]) and extension legend ([`ext_legend`]) beside the
 //!   [`treemap_view`], and the status bar (item lines from [`describe`]).
 //! - [`commands`], [`node_actions`], [`menus`] — what the menus, shortcuts and right-click
-//!   menus do; [`context_menu`], [`toast`], [`sheets`] — the overlays that show them.
+//!   menus do; [`context_menu`], [`sheets`] — the overlays that show them.
 //! - [`frame_stats`] — whole-frame timing under `HDTREEMAP_STATS`.
 
 pub mod breadcrumb;
@@ -30,18 +32,30 @@ pub mod node_actions;
 pub mod scan_strip;
 pub mod sheets;
 pub mod start_screen;
-pub mod toast;
 pub mod treemap_view;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agg_gui::{Rebuilder, Stack, Widget};
+use agg_gui::widgets::toast::ToastHost;
+use agg_gui::{Insets, Rebuilder, Stack, Widget};
 
 use crate::fonts::Fonts;
 use crate::platform::PlatformServices;
 use crate::state::{AppState, Screen};
 use commands::Commands;
+
+/// Widget id of the toast host (the root).
+pub const TOAST_HOST_ID: &str = "toasts";
+
+/// Where the toasts stack: the bottom-right corner, above the status bar, so they sit
+/// over the map.
+const TOAST_INSET: Insets = Insets {
+    left: 16.0,
+    right: 16.0,
+    top: 16.0,
+    bottom: 44.0,
+};
 
 /// The app's root widget.
 pub fn build_root(
@@ -73,8 +87,13 @@ pub fn build_root(
             commands.nodes().clone(),
             Arc::clone(&fonts.ui),
         )))
-        .add(Box::new(toast::Toasts::new(&state, Arc::clone(&fonts.ui))))
         .add(sheets::trash_sheet(&commands, &fonts))
         .add(sheets::about_sheet(&commands, &fonts));
-    Box::new(menus::CommandKeys::new(Box::new(stack), commands))
+    let keys = menus::CommandKeys::new(Box::new(stack), commands);
+    Box::new(
+        ToastHost::new(Box::new(keys), state.toasts(), Arc::clone(&fonts.ui))
+            .with_icon_font(Arc::clone(&fonts.icons))
+            .with_inset(TOAST_INSET)
+            .with_name(TOAST_HOST_ID),
+    )
 }

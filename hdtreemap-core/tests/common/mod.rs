@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use agg_gui::widget::{find_widget_by_id, find_widget_screen_rect};
+use agg_gui::widgets::toast::ToastHost;
 use agg_gui::{App, Framebuffer, GfxCtx, Key, Label, Modifiers, MouseButton, Rect, Size};
 use hdtreemap_core::demo_fs::{DemoPace, DemoProfile, DemoScanner};
 use hdtreemap_core::platform::{
@@ -19,7 +20,7 @@ use hdtreemap_core::platform::{
 use hdtreemap_core::scan::ScanSource;
 use hdtreemap_core::state::ScanTarget;
 use hdtreemap_core::ui::context_menu::{ContextMenuHost, CONTEXT_MENU_ID};
-use hdtreemap_core::ui::toast::{Toasts, TOAST_ID};
+use hdtreemap_core::ui::TOAST_HOST_ID;
 use hdtreemap_core::{build_app, install_theme_and_fonts, AppState};
 
 pub const WIDTH: f64 = 1200.0;
@@ -272,9 +273,14 @@ impl Harness {
         self.frame();
     }
 
-    /// The toasts shown by the last paint.
+    /// The toasts drawn by the last paint, oldest first.
     pub fn toasts(&self) -> Vec<String> {
-        self.widget::<Toasts>(TOAST_ID).shown().to_vec()
+        let host = self.widget::<ToastHost>(TOAST_HOST_ID);
+        host.painted()
+            .iter()
+            .rev()
+            .map(|t| t.text.clone())
+            .collect()
     }
 
     pub fn click_at(&mut self, x: f64, y: f64) {

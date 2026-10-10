@@ -2,9 +2,9 @@
 //! show them, kept in `AppState` so the treemap, the folder tree, the menus and the tests
 //! all reach the same one:
 //!
-//! - **toasts**: transient messages ("Copied path", "Moved X to the Trash", errors), shown
-//!   bottom-right by `ui/toast.rs` and dropped after [`TOAST_TIME`] ([`ERROR_TOAST_TIME`]
-//!   for errors);
+//! - **toasts**: transient messages ("Copied path", "Moved X to the Trash", a demo note,
+//!   errors) in agg-gui's [`Toasts`] queue, which the root's `ToastHost` (`ui/mod.rs`)
+//!   paints bottom-right over the map; agg-gui times them out (errors stay up longer);
 //! - the **Move to Trash confirmation**: which node is waiting, and the visibility cell of
 //!   its `ModalSheet` (`ui/sheets.rs`);
 //! - the **About** sheet's visibility;
@@ -14,47 +14,17 @@
 //! - whether the shell installed a **native menu bar** (macOS), in which case the window
 //!   shows no in-window one.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Duration;
 
+use agg_gui::widgets::toast::{ToastKind, Toasts};
 use agg_gui::Point;
-use web_time::Instant;
 
 use super::AppState;
 use crate::model::NodeId;
 
-/// How long an ordinary toast stays up.
-pub const TOAST_TIME: Duration = Duration::from_secs(4);
-/// How long an error toast stays up.
-pub const ERROR_TOAST_TIME: Duration = Duration::from_secs(8);
-/// Most toasts shown at once (the oldest go first).
-const MAX_TOASTS: usize = 4;
-
-/// What a toast reports.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToastKind {
-    Info,
-    Error,
-}
-
-/// One transient message.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Toast {
-    pub text: String,
-    pub kind: ToastKind,
-    pub shown: Instant,
-}
-
-impl Toast {
-    /// How long it stays up.
-    pub fn lifetime(&self) -> Duration {
-        match self.kind {
-            ToastKind::Info => TOAST_TIME,
-            ToastKind::Error => ERROR_TOAST_TIME,
-        }
-    }
-}
+/// Most toasts shown at once (older ones fade out when a new one would exceed it).
+pub const MAX_TOASTS: usize = 4;
 
 /// A right click asked for a context menu.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,7 +37,7 @@ pub struct ContextRequest {
 
 /// See the module docs.
 pub(super) struct Notices {
-    toasts: RefCell<Vec<Toast>>,
+    toasts: Toasts,
     trash_request: Cell<Option<NodeId>>,
     trash_sheet: Rc<Cell<bool>>,
     about_sheet: Rc<Cell<bool>>,
@@ -81,7 +51,7 @@ pub(super) struct Notices {
 impl Default for Notices {
     fn default() -> Self {
         Self {
-            toasts: RefCell::new(Vec::new()),
+            toasts: Toasts::new().with_max_visible(MAX_TOASTS),
             trash_request: Cell::new(None),
             trash_sheet: Rc::new(Cell::new(false)),
             about_sheet: Rc::new(Cell::new(false)),
@@ -98,33 +68,24 @@ impl AppState {
         &self.inner.notices
     }
 
-    /// Show `text` as a toast.
+    /// Show `text` as a success toast: an action did what was asked.
     pub fn notify(&self, text: impl Into<String>) {
-        self.push_toast(text.into(), ToastKind::Info);
+        self.notices().toasts.show_kind(ToastKind::Success, text);
+    }
+
+    /// Show `text` as an information toast (a note, such as the demo's "simulated").
+    pub fn notify_info(&self, text: impl Into<String>) {
+        self.notices().toasts.show_kind(ToastKind::Info, text);
     }
 
     /// Show `text` as an error toast (it stays up longer).
     pub fn notify_error(&self, text: impl Into<String>) {
-        self.push_toast(text.into(), ToastKind::Error);
+        self.notices().toasts.show_kind(ToastKind::Error, text);
     }
 
-    fn push_toast(&self, text: String, kind: ToastKind) {
-        let mut toasts = self.notices().toasts.borrow_mut();
-        toasts.push(Toast {
-            text,
-            kind,
-            shown: Instant::now(),
-        });
-        let excess = toasts.len().saturating_sub(MAX_TOASTS);
-        toasts.drain(..excess);
-        agg_gui::animation::request_draw();
-    }
-
-    /// The toasts still up, oldest first (expired ones are dropped).
-    pub fn toasts(&self) -> Vec<Toast> {
-        let mut toasts = self.notices().toasts.borrow_mut();
-        toasts.retain(|t| t.shown.elapsed() < t.lifetime());
-        toasts.clone()
+    /// The toast queue (a shared handle): the root's `ToastHost` shows it.
+    pub fn toasts(&self) -> Toasts {
+        self.notices().toasts.clone()
     }
 
     /// Ask to confirm moving `node` to the trash: the confirmation sheet opens for it.

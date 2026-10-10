@@ -250,7 +250,7 @@ impl NodeActions {
                     self.state.notify(done);
                 }
             }
-            Ok(ActionOutcome::Simulated(note)) => self.state.notify(note),
+            Ok(ActionOutcome::Simulated(note)) => self.state.notify_info(note),
             Err(err) => self.state.notify_error(err.message),
         }
     }
@@ -279,7 +279,7 @@ impl NodeActions {
         };
         let source = self.platform.scan_source(&folder);
         if self.state.start_rescan(node, source) && self.platform.is_demo() {
-            self.state.notify(DEMO_RESCAN_MESSAGE);
+            self.state.notify_info(DEMO_RESCAN_MESSAGE);
         }
     }
 
@@ -328,7 +328,7 @@ impl NodeActions {
                         "Moved {name} to the Trash ({})",
                         format_bytes(size)
                     )),
-                    ActionOutcome::Simulated(_) => self.state.notify(SIMULATED_TRASH_MESSAGE),
+                    ActionOutcome::Simulated(_) => self.state.notify_info(SIMULATED_TRASH_MESSAGE),
                 }
             }
             Err(err) => self.state.notify_error(err.message),

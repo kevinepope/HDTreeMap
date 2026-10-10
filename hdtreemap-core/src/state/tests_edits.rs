@@ -99,11 +99,9 @@ fn a_folder_rescan_splices_the_fresh_folder_back_in() {
     assert!(state
         .with_result(|r, _| r.tree.is_live(folder))
         .unwrap_or(false));
-    let toasts = state.toasts();
+    let toasts = state.toasts().texts();
     assert!(
-        toasts
-            .last()
-            .is_some_and(|t| t.text.starts_with("Rescanned")),
+        toasts.last().is_some_and(|t| t.starts_with("Rescanned")),
         "{toasts:?}"
     );
     // A file is not a folder to rescan.
@@ -113,18 +111,24 @@ fn a_folder_rescan_splices_the_fresh_folder_back_in() {
 
 #[test]
 fn toasts_keep_the_latest_few() {
+    let _clock = agg_gui::clock::scoped_virtual(None);
     let state = AppState::new();
     for i in 0..6 {
         state.notify(format!("note {i}"));
     }
     state.notify_error("bad");
-    let toasts = state.toasts();
-    assert_eq!(toasts.len(), 4);
+    // The oldest beyond MAX_TOASTS fade out at once.
+    agg_gui::clock::advance(agg_gui::widgets::toast::TOAST_FADE_OUT + Duration::from_millis(1));
     assert_eq!(
-        toasts.last().map(|t| (t.text.as_str(), t.kind)),
-        Some(("bad", ToastKind::Error))
+        state.toasts().texts(),
+        vec!["note 3", "note 4", "note 5", "bad"],
+        "{MAX_TOASTS} at most"
     );
-    assert_eq!(toasts[0].text, "note 3");
+    // An error stays up longer than the rest.
+    agg_gui::clock::advance(agg_gui::widgets::toast::DEFAULT_TOAST_DURATION);
+    assert_eq!(state.toasts().texts(), vec!["bad"]);
+    agg_gui::clock::advance(agg_gui::widgets::toast::ERROR_TOAST_DURATION);
+    assert!(state.toasts().is_empty());
 }
 
 #[test]

@@ -259,7 +259,7 @@ impl Commands {
             Command::About => state.show_about(),
             Command::ViewOnGitHub => match self.platform.open_url(GITHUB_URL) {
                 Ok(ActionOutcome::Done) => {}
-                Ok(ActionOutcome::Simulated(note)) => state.notify(note),
+                Ok(ActionOutcome::Simulated(note)) => state.notify_info(note),
                 Err(err) => state.notify_error(err.message),
             },
         }

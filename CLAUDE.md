@@ -56,7 +56,7 @@ hdtreemap-core/     rlib: everything testable, no platform code
                       colour scheme, size mode, versions;
                       derived.rs: shared palette and zoom-root ExtTable; volumes.rs: cached
                       volume list; edits.rs: remove_node, folder rescan + splice;
-                      notices.rs: toasts, trash/About sheets, context-menu requests, quit
+                      notices.rs: the agg-gui Toasts queue, trash/About sheets, context-menu requests, quit
   src/ui/             widgets. mod.rs: root Stack (menu bar + screen, overlays);
                       start_screen (drives, Recent), main_view (toolbar, breadcrumb,
                       scan_strip while scanning, splitters, status bar; shown live from
@@ -65,7 +65,8 @@ hdtreemap-core/     rlib: everything testable, no platform code
                       rows), ext_legend.rs (Table), describe.rs; commands.rs (menu
                       commands), node_actions.rs (reveal/open/copy/zoom/rescan/trash),
                       menus.rs (menu spec, in-window MenuBar, shortcuts), context_menu.rs
-                      (PopupMenu host), sheets.rs (trash confirm, About), toast.rs
+                      (PopupMenu host), sheets.rs (trash confirm, About); the root
+                      sits in agg-gui's ToastHost (toasts from AppState::notify)
   tests/              headless UI tests (common/ harness with a recording FakePlatform),
                       scanner tests, live_map, color_by, actions/menus tests,
                       file_line_count
@@ -121,7 +122,7 @@ wasm-pack build hdtreemap-wasm --target web --out-dir ../demo/public/pkg --no-ty
 ```
 
 `HDTREEMAP_SCREENSHOT=out.png cargo run -p hdtreemap-native` captures a frame and exits;
-`HDTREEMAP_SCREENSHOT_SHOW=context-menu|trash|menu|about|color-folder` opens that UI first (with
+`HDTREEMAP_SCREENSHOT_SHOW=context-menu|trash|menu|about|color-folder|toast` opens that UI first (with
 `HDTREEMAP_IN_WINDOW_MENU=1` for the in-window bar on macOS). Never confirm a trash on real
 files while testing: point it at a temporary folder.
 `HDTREEMAP_STATS=1` prints treemap layout / raster times, per-frame layout+paint time,
