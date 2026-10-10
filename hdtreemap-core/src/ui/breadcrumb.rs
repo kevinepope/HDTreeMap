@@ -92,8 +92,8 @@ pub fn build(state: &AppState, target: &ScanTarget, fonts: &Fonts) -> Box<dyn Wi
                 })
                 .collect()
         })
-        // Before a scan has anything to show: just its root.
-        .unwrap_or_else(|| vec![(NodeId(0), shorten(&target.display_name(), fonts))]);
+        // Before a scan has anything to show: an empty row (it takes no height).
+        .unwrap_or_default();
     let lengths: Vec<usize> = segments.iter().map(|(_, n)| n.chars().count()).collect();
     let mut row = FlexRow::new().with_gap(4.0).with_h_anchor(HAnchor::STRETCH);
     let last = segments.len().saturating_sub(1);

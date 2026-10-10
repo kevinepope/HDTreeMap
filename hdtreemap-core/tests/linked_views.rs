@@ -447,7 +447,8 @@ fn the_root_row_shows_the_drive_or_folder_name_and_the_path_as_a_tooltip() {
     let (x, y) = h.point_at_local(FOLDER_TREE_ID, rect);
     h.move_to(x, y);
     let tip = find_widget_by_id(h.app.root(), FOLDER_TREE_ID)
-        .and_then(|w| w.tooltip_text().map(str::to_string));
+        .and_then(|w| w.children().first())
+        .and_then(|view| view.tooltip_text().map(str::to_string));
     assert_eq!(tip.as_deref(), Some("/demo/usb-stick"));
     // Another row: no path tip.
     let child = root_children(&h.state)[0];
@@ -455,7 +456,8 @@ fn the_root_row_shows_the_drive_or_folder_name_and_the_path_as_a_tooltip() {
     let (x, y) = h.point_at_local(FOLDER_TREE_ID, rect);
     h.move_to(x, y);
     let tip = find_widget_by_id(h.app.root(), FOLDER_TREE_ID)
-        .and_then(|w| w.tooltip_text().map(str::to_string));
+        .and_then(|w| w.children().first())
+        .and_then(|view| view.tooltip_text().map(str::to_string));
     assert_eq!(tip, None);
 
     // A folder with a long path: its own name.

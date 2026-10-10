@@ -65,6 +65,8 @@ impl Rows {
         let idx = self.add_node(nodes, tree, tree.root(), None, 0);
         if let Some(row) = nodes.get_mut(idx) {
             row.label = root_label.to_string();
+            // The label is a short name: the full path is the row's tooltip.
+            row.tooltip = Some(tree.path(tree.root()).to_string_lossy().into_owned());
         }
     }
 
