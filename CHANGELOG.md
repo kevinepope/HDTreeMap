@@ -2,6 +2,12 @@
 
 All notable changes to HDTreeMap are documented here.
 
+## Unreleased
+
+### Added
+- `run-mac.command`: a double-click macOS launcher that builds a release binary and
+  starts the app, passing its arguments through (`[PATH | --demo ID]`).
+
 ## 0.1.0 — 2026-10-10
 
 The first release: milestones M0–M6 of `docs/PLAN.md`.
