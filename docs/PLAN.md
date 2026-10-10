@@ -177,6 +177,36 @@ These are built from existing agg-gui widgets wherever possible:
 
 All icons are Font Awesome code points, per the agg-gui rules.
 
+*As built (M3):* the middle of the results view is a horizontal `Splitter` (28% for the
+left column, ratio kept in `AppState` for the session). The left column is a vertical
+`Splitter`: the folder tree above the legend (60/40). The map keeps the full height, and
+the two lists read as one sidebar.
+- **Folder tree** (`ui/folder_tree/`): a `FolderTree` wrapper owns the `TreeView` and syncs
+  it with `AppState` once per layout, both ways. A map selection opens the path, selects
+  the row and scrolls to it; a row selection or hover drives the map; a double click or
+  Enter on a folder zooms. `TreeView` has no column support, so the row label carries
+  `name · size · % of parent`; there is no right-aligned bar. Its icon slot takes no
+  glyph, so the Font Awesome folder and file glyphs are drawn once into `IconImage`s. It
+  also has no select, scroll or change-callback API, and its rows' labels take a click's
+  focus target. So the wrapper writes its node list, scrolls it with a wheel event, and
+  claims the pointer and focus, forwarding events to it.
+- **Extension legend** (`ui/ext_legend.rs`): an agg-gui `Table`. A rows provider refreshes
+  from `AppState::zoom_extensions` (`ExtTable::from_subtree`, cached per zoom root). A cell
+  painter draws the swatch from the shared `AppState::palette`. `HeaderClick` sorts.
+- **Highlight**: the map is drawn from a cached raster painted with
+  `Palette::highlighting` (every other colour dimmed). Outlining each file in the overlay
+  was measured first: about 9 ms a frame for 2,105 `.jpg` rectangles on the archive
+  server. The dimmed raster costs 1.4–6.5 ms once per change and nothing per frame after
+  that.
+- **Measured** (`examples/bench_views`, archive server, 1600×1000, agg-gui's software
+  renderer, so upper bounds; Apple Silicon under heavy load):
+  - idle 6.6 ms, hovering the map 7.0 ms, hovering tree rows 6.7 ms, hovering with
+    `.jpg` highlighted 7.2 ms;
+  - selecting on the map 12.4 ms mean (layout 0.7 ms; the rest is the software renderer
+    rasterising the rebuilt tree rows' labels).
+  - Native shell (GPU), `HDTREEMAP_STATS`, archive server with `.jpg` highlighted, about
+    1720×1440 px map: 1.25 ms average CPU layout+paint per frame.
+
 ### 3.6 Platform services (native crate)
 
 | Service | macOS | Windows | Linux |
@@ -194,13 +224,17 @@ Each milestone ends green: fmt, clippy `-D warnings` and tests.
 1. **M0 – Scaffold**: workspace (core / native / wasm), CLAUDE.md (copied from the Critters rules), MIT LICENSE, pre-commit scripts, CI matrix on all three OSes plus a wasm check and Pages deploy, and the start screen running both natively (real volumes) and in the browser (simulated drive).
 2. **M1 – Scanner + model** *(done)*: jwalk scan into the arena, both size modes, inode dedup, filesystem boundaries, cancel, and error collection. Tests use temporary directory trees (including hard links and symlinks, on Unix). Includes a CLI-ish `--dump-top N` debug flag for checking the scanner without the UI.
 3. **M2 – Treemap** *(done)*: squarify, cushion rasteriser, `TreemapView` with hover and status bar, progress screen, and zoom in and out with the breadcrumb. Unit tests for layout invariants and a golden-image test for the rasteriser.
-4. **M3 – Linked views**: folder tree and extension legend, all synced with the map selection, plus highlight-by-extension.
+4. **M3 – Linked views** *(done)*: folder tree and extension legend, all synced with the map selection, plus highlight-by-extension.
 5. **M4 – Actions**: context menu, reveal, open, copy path, rescan folder, Move to Trash with confirmation, and the menu bar items.
 6. **M5 – Polish and perf**: measure on a real full-disk scan of each OS, **live map during the scan**, remembered window bounds and settings, and the colour-by-top-folder mode.
 7. **M6 – Ship**: README with a hero screenshot, a GitHub release workflow (zipped binaries for all three OSes, a macOS `.app` via `cargo-bundle`), and the rust-apps README entry and submodule.
 
 ## 5. Risks and open questions
 - **Million-node trees in `TreeView`**: it must be lazy, expanding only on demand. Check this early in M3.
+  *Resolved (M3):* rows are added on expansion, capped at 200 per folder, and folders the
+  tree opened for an earlier selection are closed and their rows pruned (`TreeView`'s
+  layout cost grows with every row it holds). The archive server's 1.56 M files start
+  with under 20 rows; clicking around the map keeps it near 700.
 - **macOS privacy**: without Full Disk Access, `~/Library` and similar folders return permission errors. We report them clearly; we don't try to get around them.
 - **Windows sizes**: allocated size for compressed, sparse or OneDrive placeholder files varies. Use `GetCompressedFileSizeW` and document the behaviour.
 - **Scanning speed vs WizTree**: we accept the speed of a parallel walk. Reading the MFT is a possible v2 item.

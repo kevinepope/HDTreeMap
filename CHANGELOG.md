@@ -5,6 +5,23 @@ All notable changes to HDTreeMap are documented here.
 ## Unreleased
 
 ### Added
+- M3 linked views. The results view puts a folder tree over an extension legend on the
+  left (a splitter at 28% of the width, kept for the session) beside the map.
+  - Folder tree: Font Awesome icons, name, size and share of the parent folder, children
+    by size. Rows are added only when a folder opens, at most 200 per folder plus an
+    "N more" row, so million-file scans stay fast. Selecting or hovering a row does the
+    same on the map. Selecting on the map opens the tree down to the item and scrolls to
+    it. Double click or Enter on a folder zooms the map. The zoom path opens by default.
+  - Extension legend: colour swatch (the map's own colours), extension, size, share and
+    file count for the zoom root, sorted by size. Click a header to sort by that column
+    (again to reverse). Click a row to dim everything on the map but that extension's
+    files; click it again or press Escape to clear. The status bar says what is
+    highlighted ("Highlighting .mov: 37 files, 120 GB").
+- The map's tooltip has one part per line again, and each rectangle gets its own hover
+  delay.
+- `hdtreemap --highlight EXT` highlights an extension once the scan finishes.
+- `cargo run --release -p hdtreemap-core --example bench_views` times whole frames of the
+  results screen headless (hover, select, highlight).
 - M2 treemap: finished scans open straight on a squarified treemap with cushion shading
   (van Wijk), coloured by the 16 biggest extensions. Sub-pixel items merge into
   aggregate blocks so every byte keeps its area. Hover outlines the item and its folder,

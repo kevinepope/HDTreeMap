@@ -10,9 +10,10 @@ against simulated drives. It never reads anything on your computer.
 
 ## Status
 
-Early development. Milestones M0–M2 are done: pick a drive or folder, watch the parallel
-scan, then explore the result as a cushion treemap. The linked folder tree and extension
-legend come next. See [docs/PLAN.md](docs/PLAN.md) for the full plan.
+Early development. Milestones M0–M3 are done: pick a drive or folder, watch the parallel
+scan, then explore the result as a cushion treemap linked to a folder tree and an
+extension legend. Actions (reveal, open, Move to Trash) come next. See
+[docs/PLAN.md](docs/PLAN.md) for the full plan.
 
 ## Features
 
@@ -23,15 +24,17 @@ legend come next. See [docs/PLAN.md](docs/PLAN.md) for the full plan.
 - Hover for the path, size and share of each item (status bar and tooltip); click to
   select; double-click to zoom into a folder; Backspace, the mouse back button or the
   breadcrumb to zoom out.
+- A folder tree beside the map, sorted by size with each folder's share, linked both ways:
+  select or hover in either one and the other follows. Double-click a folder to zoom.
+- An extension legend with the map's colours, sizes, shares and file counts for the
+  current folder. Click an extension to highlight its files on the map.
 - "Size on disk" or apparent size, switchable without rescanning.
 - Status bar with totals, unreadable items and free space.
 
 ## Planned features
 
-- Linked folder tree and extension legend.
 - Reveal in Finder / Explorer / file manager, Open, Copy Path, Rescan, and Move to Trash
   (with confirmation; never a permanent delete).
-- The same app in the browser as a demo, on simulated drives.
 
 ## Build and run
 
@@ -48,6 +51,7 @@ Native app:
 ```sh
 cargo run --release             # start screen
 cargo run --release -- ~/Code   # open straight on a folder
+cargo run --release -- --demo dev-workstation --highlight js   # a simulated drive
 ```
 
 Web demo (needs [wasm-pack](https://rustwasm.github.io/wasm-pack/) and [bun](https://bun.sh/)):
