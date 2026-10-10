@@ -350,7 +350,8 @@ impl Builder<'_> {
             .map(|c| (self.tree.size(c), c))
             .filter(|(size, _)| *size > 0)
             .collect();
-        let total: u64 = children.iter().map(|(size, _)| size).sum();
+        // u128: a folder's children can add up past u64 (its own size saturates).
+        let total: u128 = children.iter().map(|&(size, _)| u128::from(size)).sum();
         if total == 0 {
             self.rects[index as usize].kind = RectKind::FolderBlock;
             return;
@@ -361,7 +362,7 @@ impl Builder<'_> {
         for (size, child) in children {
             if size as f64 * per_byte < self.params.min_area {
                 leftovers.count = leftovers.count.saturating_add(1);
-                leftovers.bytes += size;
+                leftovers.bytes = leftovers.bytes.saturating_add(size);
             } else {
                 items.push((size, Item::Node(child)));
             }

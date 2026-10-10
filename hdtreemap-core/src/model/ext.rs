@@ -112,8 +112,8 @@ impl ExtTable {
 
 fn add_file(totals: &mut [(Sizes, u64)], node: &super::node::Node) {
     if let Some((sizes, count)) = totals.get_mut(usize::from(node.ext)) {
-        sizes.allocated += node.allocated;
-        sizes.apparent += node.apparent;
-        *count += 1;
+        sizes.allocated = sizes.allocated.saturating_add(node.allocated);
+        sizes.apparent = sizes.apparent.saturating_add(node.apparent);
+        *count = count.saturating_add(1);
     }
 }

@@ -415,3 +415,26 @@ fn nearest_lookup_falls_back_to_the_closest_laid_out_folder() {
     assert_eq!(zoomed.index_of_nearest(&tree, root), None);
     assert_eq!(zoomed.index_of_nearest(&tree, many), Some(0));
 }
+
+#[test]
+fn sizes_near_the_u64_limit_do_not_overflow() {
+    // Bogus sizes (a corrupt filesystem, a sparse file reporting exabytes) must not panic:
+    // the root saturates, and its children's total must not wrap either.
+    let mut b = TreeBuilder::new("/r");
+    let root = b.root();
+    let huge = u64::MAX / 2 + 10;
+    file(&mut b, root, "a.bin", huge);
+    file(&mut b, root, "b.bin", huge);
+    for i in 0..50 {
+        file(&mut b, root, &format!("tiny{i}"), u64::MAX / 4096);
+    }
+    let tree = b.finish(SizeMode::Allocated);
+    let map = layout(&tree, tree.root(), BOUNDS, &LayoutParams::default());
+    let painted: f64 = map
+        .rects()
+        .iter()
+        .filter(|r| r.kind != RectKind::Dir)
+        .map(|r| r.rect.area())
+        .sum();
+    assert!((painted - BOUNDS.area()).abs() < 1.0, "painted {painted}");
+}

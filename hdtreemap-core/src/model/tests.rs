@@ -298,3 +298,21 @@ fn a_lossy_name_makes_its_path_and_everything_below_inexact() {
     assert!(tree.has_lossy_path(below));
     assert!(!tree.has_lossy_path(fine));
 }
+
+#[test]
+fn extension_totals_saturate_instead_of_overflowing() {
+    let mut b = TreeBuilder::new("/r");
+    let root = b.root();
+    let huge = Sizes::new(u64::MAX / 2 + 10, u64::MAX / 2 + 10);
+    b.add_file(root, "a.iso", huge, NodeFlags::empty());
+    b.add_file(root, "b.iso", huge, NodeFlags::empty());
+    let tree = b.finish(SizeMode::Allocated);
+    for table in [
+        ExtTable::from_tree(&tree),
+        ExtTable::from_subtree(&tree, root),
+    ] {
+        let row = table.get("iso").expect("iso");
+        assert_eq!(row.sizes, Sizes::new(u64::MAX, u64::MAX));
+        assert_eq!(row.count, 2);
+    }
+}
