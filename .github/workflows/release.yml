@@ -1,0 +1,132 @@
+# Release builds of HDTreeMap: the native app for Linux, Windows and macOS, packaged and
+# (for a version tag) attached to a GitHub Release.
+#
+# - Linux (x86_64-unknown-linux-gnu): hdtreemap-<version>-linux-x86_64.tar.gz with the
+#   binary, README, LICENSE and a PNG icon.
+# - Windows (x86_64-pc-windows-msvc): hdtreemap-<version>-windows-x86_64.zip with the .exe
+#   (its icon set from assets/icon/hdtreemap.ico by Electron's rcedit), README and LICENSE.
+# - macOS (aarch64-apple-darwin + x86_64-apple-darwin, merged with lipo):
+#   HDTreeMap-<version>-macos-universal.zip holding HDTreeMap.app, built by
+#   scripts/package-macos.sh (ad-hoc signed, not notarized).
+#
+# A tag `v*` builds everything and publishes a release with the packages. A manual run
+# (workflow_dispatch) only builds them and keeps them as workflow artifacts.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            targets: x86_64-unknown-linux-gnu
+          - name: windows-x86_64
+            os: windows-latest
+            targets: x86_64-pc-windows-msvc
+          - name: macos-universal
+            os: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sibling agg-gui checkout: Cargo.toml's [patch.crates-io] points at ../agg-gui
+      # (see CLAUDE.md), as in CI.
+      - name: Clone agg-gui sibling
+        shell: bash
+        run: git clone --depth 1 https://github.com/larsbrubaker/agg-gui.git ../agg-gui
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check the tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_NAME#v}" != "${{ steps.version.outputs.version }}" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Build and package (Linux)
+        if: matrix.name == 'linux-x86_64'
+        shell: bash
+        run: |
+          cargo build --release -p hdtreemap-native --target x86_64-unknown-linux-gnu
+          name="hdtreemap-${{ steps.version.outputs.version }}-linux-x86_64"
+          mkdir -p "dist/$name"
+          cp target/x86_64-unknown-linux-gnu/release/hdtreemap README.md LICENSE "dist/$name/"
+          cp assets/icon/hdtreemap-256.png "dist/$name/hdtreemap.png"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "PACKAGE=dist/$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Build and package (Windows)
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        run: |
+          cargo build --release -p hdtreemap-native --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $name = "hdtreemap-${{ steps.version.outputs.version }}-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/hdtreemap.exe "dist/$name/"
+          Copy-Item README.md, LICENSE "dist/$name/"
+          # The Explorer / taskbar icon, written into the .exe's resources by Electron's
+          # rcedit (a pinned release binary).
+          Invoke-WebRequest -Uri https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe -OutFile rcedit.exe
+          ./rcedit.exe "dist/$name/hdtreemap.exe" --set-icon assets/icon/hdtreemap.ico
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          "PACKAGE=dist/$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build and package (macOS)
+        if: matrix.name == 'macos-universal'
+        shell: bash
+        run: |
+          scripts/package-macos.sh dist
+          echo "PACKAGE=dist/HDTreeMap-${{ steps.version.outputs.version }}-macos-universal.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.PACKAGE }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

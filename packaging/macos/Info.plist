@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Info.plist of HDTreeMap.app. scripts/package-macos.sh fills in @VERSION@ from
+     Cargo.toml when it builds the bundle (see .github/workflows/release.yml). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>HDTreeMap</string>
+	<key>CFBundleName</key>
+	<string>HDTreeMap</string>
+	<key>CFBundleExecutable</key>
+	<string>hdtreemap</string>
+	<key>CFBundleIconFile</key>
+	<string>hdtreemap</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.larsbrubaker.hdtreemap</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT License. Copyright (c) Lars Brubaker.</string>
+</dict>
+</plist>
