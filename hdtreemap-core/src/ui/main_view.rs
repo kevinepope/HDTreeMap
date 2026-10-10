@@ -1,14 +1,19 @@
 //! The main results view, shown when a scan finishes: a toolbar (back to the drive list,
-//! the zoom breadcrumb, size mode, cushion shading, Rescan), the treemap filling the middle,
-//! and a status bar (hovered or selected item, totals, unreadable items, free space).
+//! the zoom breadcrumb, size mode, cushion shading, Rescan), the three linked views in the
+//! middle, and a status bar (hovered or selected item, highlighted extension, totals,
+//! unreadable items, free space).
+//!
+//! The middle ([`build_centre`]) is a horizontal `Splitter`: on the left a column split
+//! again, the folder tree above the extension legend; the treemap fills the right. The left
+//! column is a vertical split rather than a legend along the map's bottom so the map keeps
+//! the full height and both lists, which read as one sidebar of rows, share its width. Both
+//! dividers are bound to `AppState` handles, so they keep their place for the session.
 //!
 //! The view is built once per screen; the parts that change while it is up rebuild on
 //! their own `Rebuilder`s keyed on the finer `AppState` versions (`state/view.rs`): the
-//! breadcrumb on the map version, the item line on the detail version, the totals on the
-//! tree version. The treemap widget itself persists and keeps its raster cache.
-//!
-//! [`build_centre`] is the middle of the view on its own, the seam where M3 puts the folder
-//! tree and the extension legend beside the map (in a `Splitter`).
+//! breadcrumb on the map version, the item and highlight lines on the detail version, the
+//! totals on the tree version. The treemap, tree and legend widgets persist and follow the
+//! state themselves.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -16,11 +21,13 @@ use std::sync::Arc;
 
 use agg_gui::{
     current_visuals, Button, Checkbox, Container, EllipsisMode, FlexColumn, FlexRow, HAnchor,
-    Insets, Label, Rebuilder, SegmentedControl, VAnchor, Widget,
+    Insets, Label, Rebuilder, SegmentedControl, Splitter, VAnchor, Widget,
 };
 
 use super::breadcrumb;
 use super::describe;
+use super::ext_legend::{ExtLegend, EXT_LEGEND_ID, NO_EXTENSION};
+use super::folder_tree::{FolderTree, FOLDER_TREE_ID};
 use super::start_screen::start_scan;
 use super::treemap_view::{TreemapView, TREEMAP_ID};
 use crate::fonts::{fa, Fonts};
@@ -48,6 +55,12 @@ pub const STATUS_TOTALS_ID: &str = "status-totals";
 pub const STATUS_ERRORS_ID: &str = "status-errors";
 /// Widget id of the status bar's free-space note.
 pub const STATUS_FREE_ID: &str = "status-free";
+/// Widget id of the status bar's highlighted-extension note.
+pub const STATUS_HIGHLIGHT_ID: &str = "status-highlight";
+/// Widget id of the splitter between the left column and the map.
+pub const SIDE_SPLITTER_ID: &str = "side-splitter";
+/// Widget id of the splitter between the folder tree and the legend.
+pub const TREE_SPLITTER_ID: &str = "tree-splitter";
 
 /// What the status bar's item line says with nothing hovered or selected.
 pub const STATUS_IDLE_TEXT: &str = "Point at the map to see what uses the space.";
@@ -67,15 +80,29 @@ pub fn build(
             .with_panel_bg()
             .with_top_anchor(true)
             .add(toolbar(state, platform, target, fonts))
-            .add_flex(build_centre(state), 1.0)
+            .add_flex(build_centre(state, fonts), 1.0)
             .add(status_bar(state, platform, target, fonts))
             .with_name(MAIN_VIEW_ID),
     )
 }
 
-/// The middle of the view: the treemap.
-pub fn build_centre(state: &AppState) -> Box<dyn Widget> {
-    Box::new(TreemapView::new(state).with_name(TREEMAP_ID))
+/// The middle of the view: folder tree over extension legend, beside the treemap.
+pub fn build_centre(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
+    let tree = FolderTree::new(state, fonts).with_name(FOLDER_TREE_ID);
+    let legend = ExtLegend::new(state, &fonts.ui).with_name(EXT_LEGEND_ID);
+    let side = Splitter::vertical(Box::new(tree), Box::new(legend))
+        .with_ratio_handle(state.tree_split())
+        .with_h_anchor(HAnchor::STRETCH)
+        .with_v_anchor(VAnchor::STRETCH)
+        .with_name(TREE_SPLITTER_ID);
+    let map = TreemapView::new(state).with_name(TREEMAP_ID);
+    Box::new(
+        Splitter::new(Box::new(side), Box::new(map))
+            .with_ratio_handle(state.side_split())
+            .with_h_anchor(HAnchor::STRETCH)
+            .with_v_anchor(VAnchor::STRETCH)
+            .with_name(SIDE_SPLITTER_ID),
+    )
 }
 
 fn toolbar(
@@ -179,10 +206,20 @@ fn status_bar(
     )
     .with_v_anchor(VAnchor::CENTER);
 
+    let highlight_state = state.clone();
+    let highlight_version = state.clone();
+    let highlight_fonts = fonts.clone();
+    let highlight = Rebuilder::new(
+        move || highlight_version.detail_version(),
+        move || highlight_note(&highlight_state, &highlight_fonts),
+    )
+    .with_v_anchor(VAnchor::CENTER);
+
     let mut row = FlexRow::new()
         .with_gap(18.0)
         .with_h_anchor(HAnchor::STRETCH)
         .add_flex(Box::new(item), 1.0)
+        .add(Box::new(highlight))
         .add(Box::new(totals));
     if let Some(errors) = errors_note(state, platform, fonts) {
         row = row.add(errors);
@@ -229,6 +266,40 @@ fn item_line(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
             .with_h_anchor(HAnchor::STRETCH)
             .with_v_anchor(VAnchor::CENTER)
             .with_name(STATUS_ITEM_ID),
+    )
+}
+
+/// `"Highlighting .mov: 37 files, 120 GB"` (in the zoom root) while an extension is
+/// highlighted; nothing otherwise.
+pub fn highlight_text(state: &AppState) -> Option<String> {
+    let ext = state.highlight_ext()?;
+    let name = state.with_result(|r, _| r.tree.ext_name(ext).to_string())?;
+    let shown = if name.is_empty() {
+        NO_EXTENSION.to_string()
+    } else {
+        format!(".{name}")
+    };
+    let table = state.zoom_extensions()?;
+    Some(match table.by_ext(ext) {
+        Some(row) => format!(
+            "Highlighting {shown}: {}, {}",
+            describe::files_phrase(row.count),
+            format_bytes(row.sizes.get(state.size_mode()))
+        ),
+        None => format!("Highlighting {shown}: no files here"),
+    })
+}
+
+/// The highlight note (an empty label while nothing is highlighted).
+fn highlight_note(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
+    Box::new(
+        Label::new(
+            highlight_text(state).unwrap_or_default(),
+            Arc::clone(&fonts.ui),
+        )
+        .with_font_size(STATUS_FONT)
+        .with_v_anchor(VAnchor::CENTER)
+        .with_name(STATUS_HIGHLIGHT_ID),
     )
 }
 

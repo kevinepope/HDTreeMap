@@ -34,6 +34,16 @@ pub mod fa {
     pub const WARNING: char = '\u{f071}';
     /// fa-chevron-right — between breadcrumb segments.
     pub const CHEVRON_RIGHT: char = '\u{f054}';
+    /// fa-folder — a folder row in the folder tree.
+    pub const FOLDER: char = '\u{f07b}';
+    /// fa-file-o — a file row in the folder tree.
+    pub const FILE_O: char = '\u{f016}';
+    /// fa-ellipsis-h — the folder tree's "N more items" row.
+    pub const ELLIPSIS_H: char = '\u{f141}';
+    /// fa-caret-down — a legend column sorted largest first.
+    pub const CARET_DOWN: char = '\u{f0d7}';
+    /// fa-caret-up — a legend column sorted smallest (or A) first.
+    pub const CARET_UP: char = '\u{f0d8}';
 }
 
 /// The faces the widgets draw with.
@@ -77,6 +87,11 @@ mod tests {
             fa::REFRESH,
             fa::WARNING,
             fa::CHEVRON_RIGHT,
+            fa::FOLDER,
+            fa::FILE_O,
+            fa::ELLIPSIS_H,
+            fa::CARET_DOWN,
+            fa::CARET_UP,
         ] {
             assert!(
                 fonts.icons.has_glyph(icon),

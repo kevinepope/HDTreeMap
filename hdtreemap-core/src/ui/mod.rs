@@ -12,6 +12,8 @@
 
 pub mod breadcrumb;
 pub mod describe;
+pub mod ext_legend;
+pub mod folder_tree;
 pub mod frame_stats;
 pub mod main_view;
 pub mod scan_screen;

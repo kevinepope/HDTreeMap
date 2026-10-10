@@ -142,6 +142,24 @@ impl Harness {
         )
     }
 
+    /// The shell (Y-down) point at the centre of `local`, a rectangle in widget `id`'s own
+    /// (Y-up) coordinates.
+    pub fn point_at_local(&self, id: &str, local: Rect) -> (f64, f64) {
+        let r = self.rect(id);
+        (
+            r.x + local.x + local.width / 2.0,
+            self.size.height - (r.y + local.y + local.height / 2.0),
+        )
+    }
+
+    /// The widget `id` downcast to its concrete type.
+    pub fn widget<T: 'static>(&self, id: &str) -> &T {
+        find_widget_by_id(self.app.root(), id)
+            .and_then(|w| w.as_any())
+            .and_then(|a| a.downcast_ref::<T>())
+            .unwrap_or_else(|| panic!("no {} {id:?}", std::any::type_name::<T>()))
+    }
+
     /// Click the centre of the widget `id` (Y-down screen coordinates, as a shell sends).
     pub fn click(&mut self, id: &str) {
         let (x, y) = self.point_in(id, 0.5, 0.5);
@@ -210,4 +228,24 @@ pub fn scanning_state(path: &str) -> AppState {
     let target = ScanTarget::folder(path);
     state.start_scan(target.clone(), platform.scan_source(&target));
     state
+}
+
+/// A harness on the main view of a finished, unpaced scan of demo drive `id`.
+pub fn demo_map(id: &str) -> Harness {
+    use hdtreemap_core::platform::DemoPlatform;
+    use hdtreemap_core::state::Screen;
+    let state = AppState::new();
+    let platform = DemoPlatform::unpaced();
+    let volume = platform
+        .list_volumes()
+        .into_iter()
+        .find(|v| v.id == id)
+        .unwrap_or_else(|| panic!("no demo drive {id:?}"));
+    let target = ScanTarget::volume(&volume);
+    state.start_scan(target.clone(), platform.scan_source(&target));
+    while state.pump(std::time::Duration::from_secs(5)) {}
+    let mut h = Harness::with_state(state, Rc::new(platform));
+    h.frame();
+    assert!(matches!(h.state.screen(), Screen::Results(_)));
+    h
 }
