@@ -10,8 +10,11 @@
 //!   runs; the scan screen's live counters watch it.
 //!
 //! A running scan is a [`ScanSource`] the state owns. `state/pump.rs` polls it once per UI
-//! frame (an agg-gui `ui_thread` drain hook) through [`AppState::pump`], which moves the app
-//! to the results (treemap) screen when the source hands back its tree.
+//! frame (an agg-gui `ui_thread` drain hook) through [`AppState::pump`]. While it runs, the
+//! results view already shows the tree scanned so far (the live map, `state/live.rs`):
+//! [`AppState::with_result`] lends the views the partial tree as a [`ScanView`], exactly as
+//! it lends them a finished scan. When the source hands back its tree the screen becomes
+//! [`Screen::Results`] without rebuilding the view, so the map just refreshes in place.
 //!
 //! What the treemap shows of the finished scan (zoom root, hover, selection, highlighted
 //! extension, shading) and the finer-grained versions its widgets watch are in
@@ -23,26 +26,28 @@
 
 mod derived;
 mod edits;
+mod live;
 mod notices;
 mod pump;
 mod view;
 mod volumes;
 
 use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
 use web_time::Instant;
 
 pub use edits::RescanStatus;
+pub use live::{live_interval_for, LIVE_INTERVAL_MAX, LIVE_INTERVAL_MIN, LIVE_SHARE};
 pub use notices::{ContextRequest, Toast, ToastKind, ERROR_TOAST_TIME, TOAST_TIME};
 pub use pump::{install_scan_pump, pump_scans, FRAME_BUDGET};
 pub use view::{Hover, MapCounters, SIDE_SPLIT_DEFAULT, TREE_SPLIT_DEFAULT};
 
-use crate::model::{ExtTable, SizeMode};
+use crate::model::{ExtTable, SizeMode, Tree};
 use crate::platform::VolumeInfo;
-use crate::scan::{ProgressSnapshot, ScanPoll, ScanResult, ScanSource};
+use crate::scan::{ProgressSnapshot, ScanErrors, ScanPoll, ScanResult, ScanSource};
 
 /// Longest time between live-counter refreshes on the scan screen.
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -97,10 +102,33 @@ impl ScanTarget {
 pub enum Screen {
     /// Volume list and "Choose Folder…".
     Start,
-    /// A scan of the target is running.
+    /// A scan of the target is running; the results view shows it live.
     Scanning(ScanTarget),
     /// The target's scan finished; its result is in the state and the treemap shows it.
     Results(ScanTarget),
+}
+
+impl Screen {
+    /// The scan target of the results view (live or finished).
+    pub fn target(&self) -> Option<&ScanTarget> {
+        match self {
+            Screen::Scanning(target) | Screen::Results(target) => Some(target),
+            Screen::Start => None,
+        }
+    }
+}
+
+/// What the views read of a scan: the finished result, or (`live`) the tree a running
+/// scan has built so far (correct partial totals, children not yet sorted).
+#[derive(Clone, Copy, Debug)]
+pub struct ScanView<'a> {
+    /// What was scanned (the tree's root name).
+    pub root: &'a Path,
+    pub tree: &'a Tree,
+    /// Entries that could not be read (so far).
+    pub errors: &'a ScanErrors,
+    /// The scan is still running.
+    pub live: bool,
 }
 
 /// A finished scan with what the results screen derives from it.
@@ -121,6 +149,7 @@ struct Inner {
     /// A folder rescan running in the background (`state/edits.rs`).
     rescan: RefCell<Option<edits::RescanJob>>,
     notices: notices::Notices,
+    live: live::LiveMap,
 }
 
 /// Everything the UI reads and writes. Cheap to clone; clones share the same state.
@@ -144,6 +173,7 @@ impl AppState {
                 volumes: volumes::VolumeCache::default(),
                 rescan: RefCell::new(None),
                 notices: notices::Notices::default(),
+                live: live::LiveMap::default(),
             }),
         }
     }
@@ -162,14 +192,16 @@ impl AppState {
         self.inner.progress_version.get()
     }
 
-    /// Show the scan screen for `target` and run `source` until it finishes. Replaces (and
-    /// cancels) any scan already running.
-    pub fn start_scan(&self, target: ScanTarget, source: Box<dyn ScanSource>) {
+    /// Show the results view for `target`, live, and run `source` until it finishes.
+    /// Replaces (and cancels) any scan already running.
+    pub fn start_scan(&self, target: ScanTarget, mut source: Box<dyn ScanSource>) {
         self.drop_scan();
         self.cancel_rescan();
         self.inner.finished.borrow_mut().take();
+        source.set_size_mode(self.size_mode());
         *self.inner.scan.borrow_mut() = Some(source);
         self.inner.last_progress.set(None);
+        self.reset_view();
         pump::register(&self.inner);
         self.set_screen(Screen::Scanning(target));
     }
@@ -225,60 +257,83 @@ impl AppState {
                     .is_none_or(|last| now.duration_since(last) >= PROGRESS_INTERVAL);
                 if due {
                     self.inner.last_progress.set(Some(now));
-                    let v = self.inner.progress_version.get();
-                    self.inner.progress_version.set(v.wrapping_add(1));
-                    agg_gui::animation::request_draw();
+                    self.bump_progress();
                 }
+                self.live_tick(now);
                 true
             }
             ScanPoll::Finished(result) => {
                 self.inner.scan.borrow_mut().take();
+                self.inner.live.clear();
+                let mut result = *result;
+                // A source without a partial tree sorts by its own default.
+                result.tree.set_size_mode(self.size_mode());
                 let extensions = ExtTable::from_tree(&result.tree);
-                *self.inner.finished.borrow_mut() = Some(Finished {
-                    result: *result,
-                    extensions,
-                });
-                self.reset_view();
+                *self.inner.finished.borrow_mut() = Some(Finished { result, extensions });
+                self.finish_view();
                 let target = match self.screen() {
                     Screen::Scanning(target) | Screen::Results(target) => target,
                     Screen::Start => ScanTarget::folder(PathBuf::new()),
                 };
-                self.set_screen(Screen::Results(target));
+                // The live view becomes the results view in place: no rebuild, no flash.
+                *self.inner.screen.borrow_mut() = Screen::Results(target);
+                self.bump_progress();
                 agg_gui::animation::request_draw();
                 false
             }
         }
     }
 
-    /// Read the finished scan and its extension table.
-    pub fn with_result<R>(&self, f: impl FnOnce(&ScanResult, &ExtTable) -> R) -> Option<R> {
-        let finished = self.inner.finished.borrow();
-        finished.as_ref().map(|d| f(&d.result, &d.extensions))
-    }
-
-    /// The finished tree's size mode ([`SizeMode::Allocated`] with no result).
-    pub fn size_mode(&self) -> SizeMode {
-        self.with_result(|r, _| r.tree.size_mode())
-            .unwrap_or_default()
-    }
-
-    /// Re-sort the finished tree (and its extension table) by `mode`. The map re-lays out
-    /// (through [`AppState::tree_version`]); the screen itself is not rebuilt.
-    pub fn set_size_mode(&self, mode: SizeMode) {
-        let changed = {
-            let mut finished = self.inner.finished.borrow_mut();
-            match finished.as_mut() {
-                Some(d) if d.result.tree.size_mode() != mode => {
-                    d.result.tree.set_size_mode(mode);
-                    d.extensions.sort(mode);
-                    true
-                }
-                _ => false,
-            }
-        };
-        if changed {
-            self.tree_changed();
+    /// Read the scan the results view shows, with its extension table: the finished
+    /// result, or while a scan runs the tree so far (once its first live tick has totalled
+    /// the extensions). `None` on the start screen.
+    pub fn with_result<R>(&self, f: impl FnOnce(&ScanView<'_>, &ExtTable) -> R) -> Option<R> {
+        if let Some(d) = self.inner.finished.borrow().as_ref() {
+            let view = ScanView {
+                root: &d.result.root,
+                tree: &d.result.tree,
+                errors: &d.result.errors,
+                live: false,
+            };
+            return Some(f(&view, &d.extensions));
         }
+        let extensions = self.inner.live.extensions();
+        let extensions = extensions.as_ref()?;
+        let scan = self.inner.scan.borrow();
+        let partial = scan.as_ref()?.partial()?;
+        let view = ScanView {
+            root: partial.root,
+            tree: partial.tree,
+            errors: partial.errors,
+            live: true,
+        };
+        Some(f(&view, extensions))
+    }
+
+    /// The size mode the map, tree and legend use (kept across scans).
+    pub fn size_mode(&self) -> SizeMode {
+        self.view_size_mode()
+    }
+
+    /// Use `mode`: re-sort the finished tree (and its extension table), or tell the running
+    /// scan. The map re-lays out (through [`AppState::tree_version`]); the screen itself is
+    /// not rebuilt.
+    pub fn set_size_mode(&self, mode: SizeMode) {
+        if self.size_mode() == mode {
+            return;
+        }
+        self.set_view_size_mode(mode);
+        if let Some(d) = self.inner.finished.borrow_mut().as_mut() {
+            d.result.tree.set_size_mode(mode);
+            d.extensions.sort(mode);
+        }
+        if let Some(source) = self.inner.scan.borrow_mut().as_mut() {
+            source.set_size_mode(mode);
+        }
+        if let Some(table) = self.inner.live.extensions_mut().as_mut() {
+            table.sort(mode);
+        }
+        self.tree_changed();
     }
 
     fn drop_scan(&self) {
@@ -286,6 +341,14 @@ impl AppState {
         if let Some(source) = scan {
             source.cancel();
         }
+        self.inner.live.clear();
+    }
+
+    /// Tick [`AppState::progress_version`] (the live counters refresh).
+    pub(super) fn bump_progress(&self) {
+        let v = self.inner.progress_version.get();
+        self.inner.progress_version.set(v.wrapping_add(1));
+        agg_gui::animation::request_draw();
     }
 
     fn set_screen(&self, screen: Screen) {

@@ -1,5 +1,6 @@
-//! `TreemapView`: the custom widget that shows the finished scan as a cushion treemap
-//! (`docs/PLAN.md` §3.4–3.5), the one widget the app draws itself.
+//! `TreemapView`: the custom widget that shows the scan as a cushion treemap
+//! (`docs/PLAN.md` §3.4–3.5), the one widget the app draws itself. While a scan runs it
+//! shows the tree so far, laid out again on each live tick (`state/live.rs`).
 //!
 //! It keeps the laid-out map ([`TreemapLayout`]) and its raster (`Arc<Vec<u8>>`, physical
 //! pixels, top row first) and draws the raster with `draw_image_rgba_arc`, so agg-gui's
@@ -154,6 +155,7 @@ impl TreemapView {
             self.drop_map();
             return;
         }
+        let refresh_started = Instant::now();
         let previous = self.cache.take();
         let state = self.state.clone();
         let params = self.params;
@@ -201,6 +203,8 @@ impl TreemapView {
         });
         let relaid = !fresh_layout;
         self.cache = next;
+        // While a scan runs, this is part of the live tick's refresh (`state/live.rs`).
+        self.state.add_live_work(refresh_started.elapsed());
         if relaid {
             self.forget_lookups();
             self.rehover();
@@ -285,7 +289,7 @@ impl TreemapView {
         let hover = index.and_then(|i| self.hover_for(i));
         let tooltip = hover.and_then(|h| {
             self.state
-                .with_result(|r, _| describe::tooltip(&r.tree, self.state.zoom_root(), h))
+                .with_result(|r, _| describe::tooltip(r.tree, self.state.zoom_root(), h))
         });
         self.base.tooltip = tooltip;
         self.state.set_hovered(hover);
@@ -372,7 +376,7 @@ impl TreemapView {
         let map = &self.cache.as_ref()?.layout;
         let index = self
             .state
-            .with_result(|r, _| map.index_of_nearest(&r.tree, node))
+            .with_result(|r, _| map.index_of_nearest(r.tree, node))
             .flatten();
         *slot = Some((node, index));
         index

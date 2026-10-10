@@ -239,7 +239,7 @@ fn move_to_trash_asks_first_then_updates_totals_tree_and_legend() {
     let count_of = |h: &Harness| {
         h.state
             .with_result(|r, _| {
-                ExtTable::from_tree(&r.tree)
+                ExtTable::from_tree(r.tree)
                     .by_ext(ext)
                     .map_or(0, |row| row.count)
             })

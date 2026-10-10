@@ -134,13 +134,19 @@ impl Commands {
         &self.nodes
     }
 
+    /// Whether the results view is up (a finished scan, or a running one shown live).
+    fn has_map(&self) -> bool {
+        self.state.screen().target().is_some()
+    }
+
+    /// Whether a finished scan is shown (Rescan waits for the running one).
     fn on_results(&self) -> bool {
-        matches!(self.state.screen(), Screen::Results(_))
+        matches!(self.state.screen(), Screen::Results(_)) && !self.state.is_scanning()
     }
 
     /// The selection, if it is a live node of the shown result.
     fn selection(&self) -> Option<NodeId> {
-        if !self.on_results() {
+        if !self.has_map() {
             return None;
         }
         let node = self.state.selected()?;
@@ -165,7 +171,7 @@ impl Commands {
     }
 
     fn zoomed_in(&self) -> bool {
-        self.on_results() && self.state.zoom_root() != NodeId(0)
+        self.has_map() && self.state.zoom_root() != NodeId(0)
     }
 
     /// Whether `command` can run now (menus grey it out when not).
@@ -181,10 +187,10 @@ impl Commands {
             Command::Trash => self
                 .selection()
                 .is_some_and(|n| self.nodes.enabled(n, NodeAction::Trash)),
-            Command::SizeMode(_) | Command::ToggleCushions => self.on_results(),
+            Command::SizeMode(_) | Command::ToggleCushions => self.has_map(),
             Command::ZoomIn => self.zoom_in_target().is_some(),
             Command::ZoomOut | Command::ZoomRoot => self.zoomed_in(),
-            Command::ClearHighlight => self.on_results() && self.state.highlight_ext().is_some(),
+            Command::ClearHighlight => self.has_map() && self.state.highlight_ext().is_some(),
             Command::About | Command::ViewOnGitHub => true,
         }
     }

@@ -1,8 +1,9 @@
 //! Headless UI test of the whole flow on the demo platform: start screen → click a drive →
-//! scan screen with live counters → straight to the treemap view (toolbar, map, status bar
-//! with totals and the unreadable-items note) → size-mode switch → Rescan → back to the
-//! drive list. The harness is in `common/mod.rs`; the treemap's own interactions are tested
-//! in `treemap_view.rs`.
+//! the results view at once, its map filling in under a scan strip with live counters →
+//! the finished map in the same view (toolbar, map, status bar with totals and the
+//! unreadable-items note) → size-mode switch → Rescan → back to the drive list. The
+//! harness is in `common/mod.rs`; the treemap's own interactions are tested in
+//! `treemap_view.rs`, the live map in `live_map.rs`.
 
 mod common;
 
@@ -18,8 +19,8 @@ use hdtreemap_core::ui::main_view::{
     BACK_ID, MAIN_VIEW_ID, RESCAN_ID, SIZE_MODE_ID, STATUS_ERRORS_ID, STATUS_FREE_ID,
     STATUS_ITEM_ID, STATUS_TOTALS_ID,
 };
-use hdtreemap_core::ui::scan_screen::{
-    CURRENT_PATH_ID, SCAN_COUNTERS_ID, SCAN_PROGRESS_ID, SCAN_SCREEN_ID,
+use hdtreemap_core::ui::scan_strip::{
+    CURRENT_PATH_ID, SCAN_COUNTERS_ID, SCAN_PROGRESS_ID, SCAN_STRIP_ID,
 };
 use hdtreemap_core::ui::start_screen::{volume_card_id, START_SCREEN_ID};
 use hdtreemap_core::ui::treemap_view::TREEMAP_ID;
@@ -50,7 +51,11 @@ fn start_scan_treemap_rescan_and_back() {
 
     h.click(&volume_card_id(usb_index));
     assert!(matches!(h.state.screen(), Screen::Scanning(_)));
-    assert!(h.visible(SCAN_SCREEN_ID));
+    assert!(
+        h.visible(MAIN_VIEW_ID),
+        "the results view shows the scan live"
+    );
+    assert!(h.visible(SCAN_STRIP_ID));
     assert!(h.visible(SCAN_COUNTERS_ID));
     assert!(h.visible(CURRENT_PATH_ID));
     assert!(h.visible(SCAN_PROGRESS_ID), "a drive has an expected size");
@@ -62,10 +67,11 @@ fn start_scan_treemap_rescan_and_back() {
     });
     assert!(moved);
 
-    // A finished scan goes straight to the treemap.
+    // A finished scan stays in the same view; the strip goes.
     wait_for_results(&mut h);
+    h.frame();
     assert!(h.visible(MAIN_VIEW_ID));
-    assert!(!h.visible(SCAN_SCREEN_ID));
+    assert!(!h.visible(SCAN_STRIP_ID));
     assert!(h.visible(TREEMAP_ID));
     assert!(h.visible(BREADCRUMB_ID));
     assert!(h.state.map_counters().rasters >= 1, "the map was drawn");

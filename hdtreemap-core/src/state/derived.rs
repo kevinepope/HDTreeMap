@@ -67,7 +67,7 @@ impl AppState {
                 // The scan's own table, already totalled and sorted.
                 Rc::new(exts.clone())
             } else {
-                Rc::new(ExtTable::from_subtree(&r.tree, key.1))
+                Rc::new(ExtTable::from_subtree(r.tree, key.1))
             }
         })?;
         if stats_enabled() {

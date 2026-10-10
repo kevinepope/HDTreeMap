@@ -150,7 +150,7 @@ fn the_demo_platform_scans_the_chosen_drive() {
     let target = usb_target();
     state.start_scan(target.clone(), platform.scan_source(&target));
     while state.pump(Duration::from_secs(5)) {}
-    let root = state.with_result(|r, _| r.root.clone());
+    let root = state.with_result(|r, _| r.root.to_path_buf());
     assert_eq!(root, Some(target.path));
 }
 
@@ -311,7 +311,7 @@ fn zoom_extensions_follow_the_zoom_root() {
     state.set_zoom_root(dir);
     let zoomed = state.zoom_extensions().expect("table");
     let expected = state
-        .with_result(|r, _| ExtTable::from_subtree(&r.tree, dir).rows().to_vec())
+        .with_result(|r, _| ExtTable::from_subtree(r.tree, dir).rows().to_vec())
         .expect("rows");
     assert_eq!(zoomed.rows(), &expected[..]);
     let files: u64 = zoomed.rows().iter().map(|r| r.count).sum();
@@ -332,4 +332,40 @@ fn splitter_ratios_survive_rebuilds_of_the_view() {
     state.start_scan(usb_target(), usb_scan());
     while state.pump(Duration::from_secs(5)) {}
     assert_eq!(state.side_split().get(), 0.4, "kept for the session");
+}
+
+#[test]
+fn the_live_interval_keeps_refreshes_to_a_share_of_the_time() {
+    assert_eq!(live_interval_for(Duration::ZERO), LIVE_INTERVAL_MIN);
+    assert_eq!(
+        live_interval_for(Duration::from_millis(30)),
+        LIVE_INTERVAL_MIN
+    );
+    // 300 ms of work needs a second between ticks to stay at 30%.
+    let paced = live_interval_for(Duration::from_millis(300));
+    assert!(
+        (paced.as_secs_f64() - 0.3 / LIVE_SHARE).abs() < 1e-6,
+        "{paced:?}"
+    );
+    assert_eq!(
+        live_interval_for(Duration::from_secs(60)),
+        LIVE_INTERVAL_MAX
+    );
+}
+
+#[test]
+fn the_size_mode_is_kept_across_scans_and_applies_to_the_next_one() {
+    let state = AppState::new();
+    state.set_size_mode(SizeMode::Apparent);
+    state.start_scan(usb_target(), usb_scan());
+    while state.pump(Duration::from_secs(5)) {}
+    assert_eq!(state.size_mode(), SizeMode::Apparent);
+    let mode = state.with_result(|r, exts| {
+        let rows = exts.rows();
+        assert!(rows
+            .windows(2)
+            .all(|w| w[0].sizes.apparent >= w[1].sizes.apparent));
+        r.tree.size_mode()
+    });
+    assert_eq!(mode, Some(SizeMode::Apparent));
 }

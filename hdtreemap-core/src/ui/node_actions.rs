@@ -183,8 +183,9 @@ impl NodeActions {
                     && !self.state.is_scanning()
                     && self.results_target().is_some()
             }
-            // The scan root stays enabled so choosing it explains the refusal.
-            NodeAction::Trash => true,
+            // Not while a scan is still building the tree. The scan root stays enabled so
+            // choosing it explains the refusal.
+            NodeAction::Trash => !self.state.is_scanning(),
         }
     }
 

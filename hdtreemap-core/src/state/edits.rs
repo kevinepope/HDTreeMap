@@ -196,12 +196,6 @@ impl AppState {
         }
         self.tree_changed();
     }
-
-    fn bump_progress(&self) {
-        let v = self.inner.progress_version.get();
-        self.inner.progress_version.set(v.wrapping_add(1));
-        agg_gui::animation::request_draw();
-    }
 }
 
 /// The folder at `path` in `tree`: its root when the tree is a scan of `path`, else the

@@ -12,7 +12,8 @@ use agg_gui::Size;
 use common::{fake, scanning_state, volume, Harness, GB};
 use hdtreemap_core::platform::DemoPlatform;
 use hdtreemap_core::state::{ScanTarget, Screen};
-use hdtreemap_core::ui::scan_screen::{CANCEL_BUTTON_ID, SCAN_SCREEN_ID};
+use hdtreemap_core::ui::main_view::MAIN_VIEW_ID;
+use hdtreemap_core::ui::scan_strip::{CANCEL_BUTTON_ID, SCAN_STRIP_ID};
 use hdtreemap_core::ui::start_screen::{
     volume_card_id, CHOOSE_FOLDER_ID, DEMO_BANNER_ID, DEMO_NOTE_ID, NO_VOLUMES_ID, START_SCREEN_ID,
 };
@@ -54,7 +55,8 @@ fn clicking_a_volume_card_scans_it_and_cancel_returns() {
     };
     assert_eq!(target.path, PathBuf::from("/Volumes/Backup"));
     assert_eq!(target.volume_name.as_deref(), Some("Backup"));
-    assert!(h.visible(SCAN_SCREEN_ID));
+    assert!(h.visible(MAIN_VIEW_ID), "the map fills in while it scans");
+    assert!(h.visible(SCAN_STRIP_ID));
     assert!(!h.visible(START_SCREEN_ID));
 
     h.click(CANCEL_BUTTON_ID);
@@ -72,7 +74,7 @@ fn choose_folder_uses_the_picker() {
         h.state.screen(),
         Screen::Scanning(ScanTarget::folder("/picked"))
     );
-    assert!(h.visible(SCAN_SCREEN_ID));
+    assert!(h.visible(SCAN_STRIP_ID));
 }
 
 #[test]
@@ -117,10 +119,11 @@ fn demo_start_screen_shows_simulated_drives_and_no_folder_picker() {
 }
 
 #[test]
-fn a_command_line_path_opens_on_the_scan_screen() {
+fn a_command_line_path_opens_on_the_live_scan() {
     let (platform, _) = fake(vec![volume("Disk", "/", 10 * GB, 5 * GB)], None);
     let h = Harness::with_state(scanning_state("/from/cli"), Rc::new(platform));
-    assert!(h.visible(SCAN_SCREEN_ID));
+    assert!(h.visible(SCAN_STRIP_ID));
+    assert!(h.visible(MAIN_VIEW_ID));
     assert!(!h.visible(START_SCREEN_ID));
 }
 

@@ -14,8 +14,9 @@
 //! - **state → tree**: a selection made elsewhere (the map) opens the folders above it,
 //!   selects its row (`select_single`) and scrolls it into view
 //!   (`scroll_node_into_view`); zooming the map opens the path down to the zoom root; a new
-//!   tree version (size mode, Move to Trash, a rescan) rebuilds the rows with new sizes and
-//!   order, keeping what was open.
+//!   tree version (size mode, Move to Trash, a rescan, a live tick of a running scan)
+//!   rebuilds the rows with new sizes and order, keeping what was open. A live tick does
+//!   not scroll the selection back into view, so the user can scroll while the scan runs.
 //!
 //! The tree stays small: folders it opened on its own to show an earlier zoom root or
 //! selection are closed again, and their rows dropped (`remove_children`), when the next
@@ -35,6 +36,7 @@ use agg_gui::{
     DrawCtx, Event, EventResult, HAnchor, MouseButton, Point, Rect, ScrollAlign, Size, TreeView,
     TreeViewEvent, VAnchor, Widget, WidgetBase,
 };
+use web_time::Instant;
 
 use crate::fonts::Fonts;
 use crate::model::{NodeId, Tree};
@@ -74,6 +76,8 @@ pub struct FolderTree {
     zoom_synced: Option<NodeId>,
     /// The `AppState` selection the tree shows.
     selection_synced: Option<NodeId>,
+    /// Whether showing the selection again scrolls to it (not after a live tick's rebuild).
+    scroll_to_selection: bool,
     /// The `TreeView` row last seen hovered.
     row_hovered: Option<usize>,
     /// The hover this view put into `AppState` (cleared when the pointer leaves).
@@ -106,6 +110,7 @@ impl FolderTree {
             built_for: None,
             zoom_synced: None,
             selection_synced: None,
+            scroll_to_selection: true,
             row_hovered: None,
             hover_pushed: None,
             auto_expanded: HashSet::new(),
@@ -218,7 +223,7 @@ impl FolderTree {
         let state = self.state.clone();
         let mut rows = std::mem::take(&mut self.rows);
         let out = match self.view_mut() {
-            Some(view) => state.with_result(|r, _| f(&mut view.nodes, &mut rows, &r.tree)),
+            Some(view) => state.with_result(|r, _| f(&mut view.nodes, &mut rows, r.tree)),
             None => None,
         };
         self.rows = rows;
@@ -231,11 +236,14 @@ impl FolderTree {
         if self.built_for == Some(version) {
             return;
         }
+        let started = Instant::now();
         let expanded = self.expanded_folders();
         self.rebuild(&expanded);
+        self.scroll_to_selection = !self.state.is_live();
         self.built_for = Some(version);
         self.zoom_synced = None;
         self.auto_expanded.clear();
+        self.state.add_live_work(started.elapsed());
     }
 
     /// The scanned folders whose rows are expanded.
@@ -427,6 +435,7 @@ impl FolderTree {
 
     /// Carry the state into the tree: the zoom path and a selection made elsewhere.
     fn push_from_state(&mut self) {
+        let scroll = std::mem::replace(&mut self.scroll_to_selection, true);
         let zoom = self.state.zoom_root();
         let selected = self.state.selected();
         if self.zoom_synced != Some(zoom) {
@@ -463,7 +472,9 @@ impl FolderTree {
             match row {
                 Some(idx) => {
                     view.select_single(idx);
-                    view.scroll_node_into_view(idx, ScrollAlign::Center);
+                    if scroll {
+                        view.scroll_node_into_view(idx, ScrollAlign::Center);
+                    }
                 }
                 None => view.clear_selection(),
             }

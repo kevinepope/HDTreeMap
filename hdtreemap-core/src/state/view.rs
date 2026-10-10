@@ -25,7 +25,7 @@ use agg_gui::SplitterRatio;
 use super::derived::DerivedCache;
 use super::AppState;
 use crate::layout::AggregateInfo;
-use crate::model::NodeId;
+use crate::model::{NodeId, SizeMode};
 use crate::render::Shading;
 
 /// Default share of the window width for the left column (folder tree and legend).
@@ -58,6 +58,7 @@ pub(super) struct ViewState {
     /// Extension name to highlight when the next scan finishes (`--highlight`).
     pending_highlight: RefCell<Option<String>>,
     shading: Cell<Shading>,
+    size_mode: Cell<SizeMode>,
     side_split: SplitterRatio,
     tree_split: SplitterRatio,
     pub(super) derived: DerivedCache,
@@ -76,6 +77,7 @@ impl ViewState {
             highlight_ext: Cell::new(None),
             pending_highlight: RefCell::new(None),
             shading: Cell::new(Shading::default()),
+            size_mode: Cell::new(SizeMode::default()),
             side_split: SplitterRatio::new(SIDE_SPLIT_DEFAULT),
             tree_split: SplitterRatio::new(TREE_SPLIT_DEFAULT),
             derived: DerivedCache::default(),
@@ -96,20 +98,37 @@ impl AppState {
         &self.inner.view
     }
 
-    /// The finished tree changed: start over at its root with nothing hovered, selected or
-    /// highlighted (except an extension asked for with [`AppState::highlight_on_finish`]).
+    /// A new scan starts: show its root with nothing hovered, selected or highlighted.
     pub(super) fn reset_view(&self) {
         let view = self.view();
         view.zoom_root.set(NodeId(0));
         view.hovered.set(None);
         view.selected.set(None);
-        let pending = view.pending_highlight.borrow_mut().take();
+        view.highlight_ext.set(None);
+        self.tree_changed();
+    }
+
+    /// The scan finished. Its tree is the one the live map showed, sorted, so the zoom,
+    /// selection and highlight made while it ran stay; an extension asked for with
+    /// [`AppState::highlight_on_finish`] is highlighted now.
+    pub(super) fn finish_view(&self) {
+        let pending = self.view().pending_highlight.borrow_mut().take();
         let ext = pending.and_then(|name| {
             self.with_result(|_, exts| exts.get(&name).map(|row| row.ext))
                 .flatten()
         });
-        view.highlight_ext.set(ext);
+        if ext.is_some() {
+            self.view().highlight_ext.set(ext);
+        }
         self.tree_changed();
+    }
+
+    pub(super) fn view_size_mode(&self) -> SizeMode {
+        self.view().size_mode.get()
+    }
+
+    pub(super) fn set_view_size_mode(&self, mode: SizeMode) {
+        self.view().size_mode.set(mode);
     }
 
     /// The tree was re-sorted or edited in place; zoom and selection stay.

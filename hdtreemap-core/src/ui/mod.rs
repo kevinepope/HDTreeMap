@@ -9,10 +9,10 @@
 //!
 //! - [`start_screen`] — app title, one clickable card per volume, "Choose Folder…", the
 //!   demo banner.
-//! - [`scan_screen`] — live progress of a running scan, and Cancel.
-//! - [`main_view`] — the results: toolbar with the [`breadcrumb`], the folder tree
-//!   ([`folder_tree`]) and extension legend ([`ext_legend`]) beside the [`treemap_view`],
-//!   and the status bar (item lines from [`describe`]).
+//! - [`main_view`] — the results, live while the scan runs: toolbar with the
+//!   [`breadcrumb`], the [`scan_strip`] (progress and Cancel, while scanning), the folder
+//!   tree ([`folder_tree`]) and extension legend ([`ext_legend`]) beside the
+//!   [`treemap_view`], and the status bar (item lines from [`describe`]).
 //! - [`commands`], [`node_actions`], [`menus`] — what the menus, shortcuts and right-click
 //!   menus do; [`context_menu`], [`toast`], [`sheets`] — the overlays that show them.
 //! - [`frame_stats`] — whole-frame timing under `HDTREEMAP_STATS`.
@@ -27,7 +27,7 @@ pub mod frame_stats;
 pub mod main_view;
 pub mod menus;
 pub mod node_actions;
-pub mod scan_screen;
+pub mod scan_strip;
 pub mod sheets;
 pub mod start_screen;
 pub mod toast;
@@ -58,8 +58,9 @@ pub fn build_root(
         move || version_state.version(),
         move || match screen_state.screen() {
             Screen::Start => start_screen::build(&screen_state, &platform, &screen_fonts),
-            Screen::Scanning(target) => scan_screen::build(&screen_state, &target, &screen_fonts),
-            Screen::Results(target) => main_view::build(&screen_commands, &target, &screen_fonts),
+            Screen::Scanning(target) | Screen::Results(target) => {
+                main_view::build(&screen_commands, &target, &screen_fonts)
+            }
         },
     );
     let bar: Option<Box<dyn Widget>> = (!state.has_native_menu_bar())

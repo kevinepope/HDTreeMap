@@ -1,7 +1,13 @@
-//! The main results view, shown when a scan finishes: a toolbar (back to the drive list,
-//! the zoom breadcrumb, size mode, cushion shading, Rescan), the three linked views in the
-//! middle, and a status bar (hovered or selected item, highlighted extension, totals,
-//! unreadable items, free space).
+//! The main results view: a toolbar (back to the drive list, the zoom breadcrumb, size mode,
+//! cushion shading, Rescan), the three linked views in the middle, and a status bar
+//! (hovered or selected item, highlighted extension, totals, unreadable items, free space).
+//!
+//! It is shown from the moment a scan starts: while the scan runs, the [`scan_strip`]
+//! (counters, progress, Cancel) sits under the toolbar and the views show the tree scanned
+//! so far, refreshed on each live tick (`state/live.rs`); Rescan waits until the scan is
+//! done. When the scan finishes the strip goes and the same widgets show the final tree.
+//!
+//! [`scan_strip`]: super::scan_strip
 //!
 //! The middle ([`build_centre`]) is a horizontal `Splitter`: on the left a column split
 //! again, the folder tree above the extension legend; the treemap fills the right. The left
@@ -29,6 +35,7 @@ use super::commands::Commands;
 use super::describe;
 use super::ext_legend::{ExtLegend, EXT_LEGEND_ID, NO_EXTENSION};
 use super::folder_tree::{FolderTree, FOLDER_TREE_ID};
+use super::scan_strip;
 use super::start_screen::start_scan;
 use super::treemap_view::{TreemapView, TREEMAP_ID};
 use crate::fonts::{fa, Fonts};
@@ -71,7 +78,7 @@ pub const STATUS_IDLE_TEXT: &str = "Point at the map to see what uses the space.
 /// Status-bar text size.
 const STATUS_FONT: f64 = 13.0;
 
-/// Build the main view for `target` from the finished scan in the commands' state.
+/// Build the main view for `target` from the scan in the commands' state (live or finished).
 pub fn build(commands: &Commands, target: &ScanTarget, fonts: &Fonts) -> Box<dyn Widget> {
     let state = commands.state();
     let platform = commands.platform();
@@ -80,6 +87,7 @@ pub fn build(commands: &Commands, target: &ScanTarget, fonts: &Fonts) -> Box<dyn
             .with_panel_bg()
             .with_top_anchor(true)
             .add(toolbar(state, platform, target, fonts))
+            .add(scan_strip::build(state, target, fonts))
             .add_flex(build_centre(state, fonts), 1.0)
             .add(status_bar(state, platform, target, fonts))
             .with_name(MAIN_VIEW_ID),
@@ -143,11 +151,13 @@ fn toolbar(
     .with_v_anchor(VAnchor::CENTER);
 
     let rescan_state = state.clone();
+    let enabled_state = state.clone();
     let rescan_platform = Rc::clone(platform);
     let rescan_target = target.clone();
     let rescan = Button::new("Rescan", Arc::clone(&fonts.ui))
         .with_icon(fa::REFRESH, Arc::clone(&fonts.icons))
         .with_focus_on_click(false)
+        .with_enabled_fn(move || !enabled_state.is_scanning())
         .on_click(move || start_scan(&rescan_state, &rescan_platform, rescan_target.clone()))
         .with_v_anchor(VAnchor::CENTER)
         .with_name(RESCAN_ID);
@@ -244,16 +254,27 @@ fn status_bar(
     )
     .with_v_anchor(VAnchor::CENTER);
 
+    let errors_state = state.clone();
+    let errors_version = state.clone();
+    let errors_platform = Rc::clone(platform);
+    let errors_fonts = fonts.clone();
+    let errors = Rebuilder::new(
+        move || errors_version.tree_version(),
+        move || {
+            errors_note(&errors_state, &errors_platform, &errors_fonts)
+                .unwrap_or_else(|| empty_note(&errors_fonts))
+        },
+    )
+    .with_v_anchor(VAnchor::CENTER);
+
     let mut row = FlexRow::new()
         .with_gap(18.0)
         .with_h_anchor(HAnchor::STRETCH)
         .add(Box::new(rescan))
         .add_flex(Box::new(item), 1.0)
         .add(Box::new(highlight))
-        .add(Box::new(totals));
-    if let Some(errors) = errors_note(state, platform, fonts) {
-        row = row.add(errors);
-    }
+        .add(Box::new(totals))
+        .add(Box::new(errors));
     let free_state = state.clone();
     let free_version = state.clone();
     let free_target = target.clone();
@@ -280,7 +301,7 @@ fn status_bar(
 /// volume list's (never listed here: that can hang on a dead network mount). Nothing
 /// while unknown.
 fn free_note(state: &AppState, target: &ScanTarget, fonts: &Fonts) -> Box<dyn Widget> {
-    let root = state.with_result(|r, _| r.root.clone());
+    let root = state.with_result(|r, _| r.root.to_path_buf());
     let free = target.free_bytes.or_else(|| {
         let path = root.as_deref().unwrap_or(&target.path);
         state.free_space_for(path)
@@ -347,7 +368,7 @@ fn item_line(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
             if !r.tree.is_live(hover.node) {
                 return None;
             }
-            Some(describe::status_line(&r.tree, hover))
+            Some(describe::status_line(r.tree, hover))
         })
         .flatten()
         .unwrap_or_else(|| STATUS_IDLE_TEXT.to_string());

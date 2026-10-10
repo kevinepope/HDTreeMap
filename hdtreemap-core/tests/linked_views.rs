@@ -257,7 +257,7 @@ fn legend_rows_follow_the_zoom_root() {
     let expect = |state: &AppState, root: NodeId| -> Vec<(String, u64)> {
         state
             .with_result(|r, _| {
-                ExtTable::from_subtree(&r.tree, root)
+                ExtTable::from_subtree(r.tree, root)
                     .rows()
                     .iter()
                     .map(|row| (row.name.clone(), row.count))

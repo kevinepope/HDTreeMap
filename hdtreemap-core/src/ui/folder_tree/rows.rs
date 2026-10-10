@@ -6,9 +6,10 @@
 //! folder is expanded ([`Rows::populate`], on `TreeViewEvent::Expanded` or when the tree
 //! opens a folder itself). Until then a folder with contents shows its expand arrow through
 //! `TreeNode::may_have_children`. Each folder lists at most [`CHILD_CAP`] children, largest
-//! first (the tree keeps children sorted by size), and one [`Entry::More`] row summing up
-//! the rest. A folder's rows can be dropped again ([`Rows::remap`] after
-//! `TreeView::remove_children`), so it is populated anew when next opened.
+//! first (sorted here, as the tree of a scan still running is not), and one
+//! [`Entry::More`] row summing up the rest. A folder's rows can be dropped again
+//! ([`Rows::remap`] after `TreeView::remove_children`), so it is populated anew when next
+//! opened.
 //!
 //! Each row shows a Font Awesome glyph, the name, the size in the active mode (the row's
 //! secondary text) and its share of the parent folder (the row's fraction bar).
@@ -89,7 +90,7 @@ impl Rows {
         let mut rest_bytes = 0u64;
         let mut rest_dirs = false;
         let mut rest_files = false;
-        for (order, child) in tree.children(id).filter(|&c| tree.is_live(c)).enumerate() {
+        for (order, child) in tree.children_by_size(id).into_iter().enumerate() {
             if order < CHILD_CAP {
                 self.add_node(nodes, tree, child, Some(idx), order as u32);
             } else {
