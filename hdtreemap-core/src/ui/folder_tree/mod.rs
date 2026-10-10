@@ -22,6 +22,9 @@
 //! selection are closed again, and their rows dropped (`remove_children`), when the next
 //! one is shown elsewhere. Folders the user opened are left alone.
 //!
+//! The root row is labelled with the drive's name or the scanned folder's own name
+//! ([`rows::root_label`]); hovering it shows the full path as a tooltip.
+//!
 //! A right click on a row selects it and opens the item's context menu
 //! ([`FolderTree::node_at`] finds the row from the `TreeView`'s own row geometry, so it is
 //! right however far the tree is scrolled).
@@ -269,8 +272,13 @@ impl FolderTree {
             view.set_cursor_node(None);
             view.take_events();
         }
+        let volume = self
+            .state
+            .screen()
+            .target()
+            .and_then(|t| t.volume_name.clone());
         self.with_tree(|nodes, rows, tree| {
-            rows.reset(nodes, tree);
+            rows.reset(nodes, tree, &rows::root_label(tree, volume.as_deref()));
             let mut stack = vec![tree.root()];
             while let Some(folder) = stack.pop() {
                 if !expanded.contains(&folder) {
@@ -285,6 +293,7 @@ impl FolderTree {
         });
         self.selection_synced = None;
         self.row_hovered = None;
+        self.base.tooltip = None;
     }
 
     /// `node` and the folders above it.
@@ -373,6 +382,7 @@ impl FolderTree {
         let hovered = self.view().and_then(TreeView::hovered_node_idx);
         if hovered != self.row_hovered {
             self.row_hovered = hovered;
+            self.base.tooltip = self.root_tooltip(hovered);
             let hover = hovered
                 .and_then(|i| self.rows.node_at(i))
                 .map(|node| Hover {
@@ -381,6 +391,16 @@ impl FolderTree {
                 });
             self.push_hover(hover);
         }
+    }
+
+    /// The full scanned path, when row `row` is the root's (its label is a short name).
+    fn root_tooltip(&self, row: Option<usize>) -> Option<String> {
+        let node = self.rows.node_at(row?)?;
+        self.state
+            .with_result(|r, _| {
+                (node == r.tree.root()).then(|| r.tree.path(node).to_string_lossy().into_owned())
+            })
+            .flatten()
     }
 
     /// The user selected a row: make its node the app's selection ("more" rows have none).
@@ -532,6 +552,11 @@ impl Widget for FolderTree {
         self.base.v_anchor
     }
 
+    /// The hovered row: its tip (the root's path) belongs to that row only.
+    fn tooltip_key(&self) -> Option<u64> {
+        self.row_hovered.map(|r| r as u64)
+    }
+
     fn layout(&mut self, available: Size) -> Size {
         let size = Size::new(available.width.max(0.0), available.height.max(0.0));
         self.bounds = Rect::new(0.0, 0.0, size.width, size.height);
@@ -559,6 +584,7 @@ impl Widget for FolderTree {
                     view.clear_hover();
                 }
                 self.row_hovered = None;
+                self.base.tooltip = None;
                 self.push_hover(None);
                 EventResult::Ignored
             }

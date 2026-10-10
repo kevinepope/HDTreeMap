@@ -434,3 +434,45 @@ fn selecting_around_the_map_keeps_the_tree_small() {
         "{open} folders open for a selection {depth} deep"
     );
 }
+
+#[test]
+fn the_root_row_shows_the_drive_or_folder_name_and_the_path_as_a_tooltip() {
+    use agg_gui::widget::find_widget_by_id;
+    use hdtreemap_core::state::ScanTarget;
+    // A drive: its name.
+    let mut h = demo_map("usb-stick");
+    let root = NodeId(0);
+    assert_eq!(tree(&h).row_label(root).as_deref(), Some("Small USB Stick"));
+    let rect = tree(&h).row_rect(root).expect("root row");
+    let (x, y) = h.point_at_local(FOLDER_TREE_ID, rect);
+    h.move_to(x, y);
+    let tip = find_widget_by_id(h.app.root(), FOLDER_TREE_ID)
+        .and_then(|w| w.tooltip_text().map(str::to_string));
+    assert_eq!(tip.as_deref(), Some("/demo/usb-stick"));
+    // Another row: no path tip.
+    let child = root_children(&h.state)[0];
+    let rect = tree(&h).row_rect(child).expect("child row");
+    let (x, y) = h.point_at_local(FOLDER_TREE_ID, rect);
+    h.move_to(x, y);
+    let tip = find_widget_by_id(h.app.root(), FOLDER_TREE_ID)
+        .and_then(|w| w.tooltip_text().map(str::to_string));
+    assert_eq!(tip, None);
+
+    // A folder with a long path: its own name.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let folder = dir
+        .path()
+        .join("a-very-long-session-folder-name")
+        .join("Projects");
+    std::fs::create_dir_all(&folder).expect("mkdir");
+    std::fs::write(folder.join("notes.txt"), "hello").expect("write");
+    let (platform, _) = common::fake(Vec::new(), None);
+    let state = AppState::new();
+    let source = hdtreemap_core::scan::FsScanner::start(folder.clone(), None);
+    state.start_scan(ScanTarget::folder(&folder), Box::new(source));
+    while state.pump(std::time::Duration::from_millis(5)) {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let h = Harness::with_state(state, std::rc::Rc::new(platform));
+    assert_eq!(tree(&h).row_label(root).as_deref(), Some("Projects"));
+}

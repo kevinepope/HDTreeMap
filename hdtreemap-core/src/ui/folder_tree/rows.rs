@@ -55,13 +55,17 @@ pub struct Rows {
 }
 
 impl Rows {
-    /// Start over with just the scan root (collapsed).
-    pub fn reset(&mut self, nodes: &mut Vec<TreeNode>, tree: &Tree) {
+    /// Start over with just the scan root (collapsed), labelled `root_label` (its own
+    /// stored name is the whole scanned path).
+    pub fn reset(&mut self, nodes: &mut Vec<TreeNode>, tree: &Tree, root_label: &str) {
         nodes.clear();
         self.entries.clear();
         self.index.clear();
         self.more.clear();
-        self.add_node(nodes, tree, tree.root(), None, 0);
+        let idx = self.add_node(nodes, tree, tree.root(), None, 0);
+        if let Some(row) = nodes.get_mut(idx) {
+            row.label = root_label.to_string();
+        }
     }
 
     /// The scanned node a `TreeView` node shows (`None` for "more" rows).
@@ -309,4 +313,17 @@ fn share(part: u64, whole: u64) -> f32 {
 fn push(nodes: &mut Vec<TreeNode>, row: TreeNode) -> usize {
     nodes.push(row);
     nodes.len() - 1
+}
+
+/// The root row's label: the drive's name when a drive was scanned, else the scanned
+/// folder's own name (the whole path only for a root such as `/` that has none).
+pub fn root_label(tree: &Tree, volume_name: Option<&str>) -> String {
+    if let Some(name) = volume_name {
+        return name.to_string();
+    }
+    let path = tree.path(tree.root());
+    match path.file_name() {
+        Some(name) => name.to_string_lossy().into_owned(),
+        None => path.to_string_lossy().into_owned(),
+    }
 }
