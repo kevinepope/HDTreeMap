@@ -22,6 +22,7 @@ use super::commands::{Command, Commands};
 use super::node_actions::{label, NodeAction, NodeActions};
 use crate::fonts::{fa, Fonts};
 use crate::model::{NodeId, SizeMode};
+use crate::render::ColorBy;
 
 /// Widget id of the in-window menu bar.
 pub const MENU_BAR_ID: &str = "menu-bar";
@@ -194,6 +195,13 @@ pub fn menu_bar_spec(commands: &Commands, native_mac: bool) -> Vec<TopMenuSpec> 
                 ),
             ],
         },
+        MenuSpec::Submenu {
+            label: "Colour By".into(),
+            items: [ColorBy::Extension, ColorBy::TopFolder]
+                .into_iter()
+                .map(|by| item(by.label(), Command::ColorBy(by), None, None))
+                .collect(),
+        },
         item("Cushion Shading", Command::ToggleCushions, None, None),
         MenuSpec::Separator,
         item(
@@ -273,7 +281,7 @@ pub fn entries(commands: &Commands, items: &[MenuSpec]) -> Vec<MenuEntry> {
                     row = row.shortcut(shortcut);
                 }
                 row = match (spec.command, commands.checked(spec.command)) {
-                    (Command::SizeMode(_), Some(on)) => row.radio(on),
+                    (Command::SizeMode(_) | Command::ColorBy(_), Some(on)) => row.radio(on),
                     (_, Some(on)) => row.checked(on),
                     (_, None) => row,
                 };

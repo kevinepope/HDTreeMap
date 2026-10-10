@@ -42,7 +42,7 @@ use crate::fonts::{fa, Fonts};
 use crate::format::{format_bytes, format_count};
 use crate::model::SizeMode;
 use crate::platform::PlatformServices;
-use crate::render::Shading;
+use crate::render::{ColorBy, Shading};
 use crate::state::{AppState, ScanTarget};
 
 /// Widget id of the whole view.
@@ -53,6 +53,8 @@ pub const BACK_ID: &str = "main-back";
 pub const RESCAN_ID: &str = "main-rescan";
 /// Widget id of the size-mode switch.
 pub const SIZE_MODE_ID: &str = "main-size-mode";
+/// Widget id of the colour-scheme switch (file type / top-level folder).
+pub const COLOR_BY_ID: &str = "main-color-by";
 /// Widget id of the cushion-shading checkbox.
 pub const SHADING_ID: &str = "main-shading";
 /// Widget id of the status bar's hovered / selected item line.
@@ -174,7 +176,8 @@ fn toolbar(
     )
 }
 
-/// The size-mode switch and the cushion checkbox, showing the state as it is now.
+/// The size-mode and colour-scheme switches and the cushion checkbox, showing the state as
+/// it is now.
 fn view_toggles(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
     let modes = [SizeMode::Allocated, SizeMode::Apparent];
     let selected = Rc::new(Cell::new(usize::from(
@@ -190,6 +193,19 @@ fn view_toggles(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
     .on_change(move |i| mode_state.set_size_mode(modes[i.min(1)]))
     .with_v_anchor(VAnchor::CENTER)
     .with_name(SIZE_MODE_ID);
+
+    let schemes = [ColorBy::Extension, ColorBy::TopFolder];
+    let scheme = Rc::new(Cell::new(usize::from(
+        state.color_by() == ColorBy::TopFolder,
+    )));
+    let scheme_state = state.clone();
+    let color_by =
+        SegmentedControl::new(vec!["By Type", "By Folder"], scheme, Arc::clone(&fonts.ui))
+            .with_fit_width(true)
+            .on_change(move |i| scheme_state.set_color_by(schemes[i.min(1)]))
+            .with_tooltip("Colour the map by file type or by top-level folder")
+            .with_v_anchor(VAnchor::CENTER)
+            .with_name(COLOR_BY_ID);
 
     let shading_state = state.clone();
     let shading = Checkbox::new(
@@ -207,6 +223,7 @@ fn view_toggles(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
             .with_gap(10.0)
             .with_fit_width(true)
             .add(Box::new(size_mode))
+            .add(Box::new(color_by))
             .add(Box::new(shading)),
     )
 }

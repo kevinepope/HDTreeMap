@@ -11,6 +11,11 @@
 //! The rows come from `AppState::zoom_extensions` (cached per zoom root and tree version),
 //! refreshed on the table's own layout through its rows provider, so zooming the map
 //! updates the legend without rebuilding the widget.
+//!
+//! While the map is coloured by top-level folder (`AppState::color_by`), the legend lists
+//! those instead: the zoom root's children by size (at most [`FOLDER_ROWS`]), each with
+//! its colour, size, share and file count; clicking one selects it (the map outlines it,
+//! the folder tree shows it), clicking it again clears the selection.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,12 +31,15 @@ use crate::fonts::fa;
 use crate::format::{format_bytes, format_count, format_percent};
 use crate::model::NodeId;
 use crate::render::palette::Rgb;
+use crate::render::ColorBy;
 use crate::state::AppState;
 
 /// Widget id of the extension legend.
 pub const EXT_LEGEND_ID: &str = "ext-legend";
 /// What the extension column says for files without one.
 pub const NO_EXTENSION: &str = "(no extension)";
+/// Most rows the legend lists by top-level folder (a folder can hold millions of files).
+pub const FOLDER_ROWS: usize = 1000;
 
 /// Row height (logical pixels).
 pub const ROW_HEIGHT: f64 = 20.0;
@@ -61,9 +69,10 @@ impl Column {
         Column::Files,
     ];
 
-    fn title(self) -> &'static str {
+    fn title(self, color_by: ColorBy) -> &'static str {
         match self {
             Column::Swatch => "",
+            Column::Extension if color_by == ColorBy::TopFolder => "Folder",
             Column::Extension => "Extension",
             Column::Size => "Size",
             Column::Share => "%",
@@ -103,11 +112,14 @@ impl Default for SortOrder {
     }
 }
 
-/// One extension's row.
+/// One extension's row (or, by top-level folder, one folder's).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LegendRow {
     pub ext: u16,
-    /// Lower-case, no dot; empty for files without an extension.
+    /// By top-level folder: the folder (or file) the row stands for.
+    pub node: Option<NodeId>,
+    /// Lower-case, no dot; empty for files without an extension. By folder: its name,
+    /// with a trailing `/` for a folder.
     pub name: String,
     pub bytes: u64,
     pub count: u64,
@@ -117,8 +129,9 @@ pub struct LegendRow {
 /// What the table shows. Shared by the table's callbacks and the widget.
 #[derive(Default)]
 struct Model {
-    /// `(tree_version, zoom root)` the rows were made for.
-    key: Option<(u64, NodeId)>,
+    /// `(tree_version, zoom root, scheme)` the rows were made for.
+    key: Option<(u64, NodeId, ColorBy)>,
+    color_by: ColorBy,
     rows: Vec<LegendRow>,
     /// Size of the zoom root (the % column's whole).
     total: u64,
@@ -126,13 +139,19 @@ struct Model {
 }
 
 impl Model {
-    /// Re-read the zoom root's extensions if the tree or the zoom changed.
+    /// Re-read the zoom root's extensions (or top folders) if the tree, the zoom or the
+    /// colour scheme changed.
     fn refresh(&mut self, state: &AppState) {
-        let key = (state.tree_version(), state.zoom_root());
+        let key = (state.tree_version(), state.zoom_root(), state.color_by());
         if self.key == Some(key) {
             return;
         }
         self.key = Some(key);
+        self.color_by = key.2;
+        if key.2 == ColorBy::TopFolder {
+            self.refresh_folders(state);
+            return;
+        }
         let (Some(table), Some(palette)) = (state.zoom_extensions(), state.palette()) else {
             self.rows.clear();
             self.total = 0;
@@ -147,12 +166,50 @@ impl Model {
             .iter()
             .map(|r| LegendRow {
                 ext: r.ext,
+                node: None,
                 name: r.name.clone(),
                 bytes: r.sizes.get(mode),
                 count: r.count,
                 color: palette.ext_color(r.ext),
             })
             .collect();
+        self.apply_sort();
+    }
+
+    /// The rows by top-level folder: the zoom root's children, biggest first.
+    fn refresh_folders(&mut self, state: &AppState) {
+        let zoom = state.zoom_root();
+        let palette = state.palette();
+        let rows = state.with_result(|r, _| {
+            let tree = r.tree;
+            let rows: Vec<LegendRow> = tree
+                .children_by_size(zoom)
+                .into_iter()
+                .take(FOLDER_ROWS)
+                .filter_map(|child| {
+                    let n = tree.node(child)?;
+                    let name = if n.is_dir() {
+                        format!("{}/", tree.name(child))
+                    } else {
+                        tree.name(child).to_string()
+                    };
+                    Some(LegendRow {
+                        ext: 0,
+                        node: Some(child),
+                        name,
+                        bytes: tree.size(child),
+                        count: u64::from(n.file_count()),
+                        color: palette
+                            .as_ref()
+                            .map_or(crate::render::OTHER_FILES, |p| p.folder_color(child)),
+                    })
+                })
+                .collect();
+            (rows, tree.size(zoom))
+        });
+        let (rows, total) = rows.unwrap_or_default();
+        self.rows = rows;
+        self.total = total;
         self.apply_sort();
     }
 
@@ -194,6 +251,7 @@ impl Model {
     fn cell_text(&self, row: &LegendRow, column: Column) -> String {
         match column {
             Column::Swatch => String::new(),
+            Column::Extension if row.node.is_some() => row.name.clone(),
             Column::Extension if row.name.is_empty() => NO_EXTENSION.to_string(),
             Column::Extension => format!(".{}", row.name),
             Column::Size => format_bytes(row.bytes),
@@ -245,16 +303,25 @@ impl ExtLegend {
                 }
             }))
             .selection_pred(Box::new(move |row| {
-                let highlight = selected_state.highlight_ext();
-                highlight.is_some()
-                    && selected_model.borrow().rows.get(row).map(|r| r.ext) == highlight
+                let model = selected_model.borrow();
+                let Some(r) = model.rows.get(row) else {
+                    return false;
+                };
+                match r.node {
+                    Some(node) => selected_state.selected() == Some(node),
+                    None => selected_state.highlight_ext() == Some(r.ext),
+                }
             }))
             .cell_painter(Box::new(move |info, ctx| {
                 paint_cell(&paint_model.borrow(), info, ctx);
             }))
             .header_painter(Box::new(move |info, ctx| {
-                let sort = header_model.borrow().sort;
-                paint_header(sort, info.col, info.rect, info.visuals, info.font, ctx);
+                let (sort, color_by) = {
+                    let model = header_model.borrow();
+                    (model.sort, model.color_by)
+                };
+                let header = Header { sort, color_by };
+                paint_header(header, info.col, info.rect, info.visuals, info.font, ctx);
             }))
             .header_click(Box::new(move |col, _, _| {
                 if let Some(&column) = Column::ALL.get(col) {
@@ -264,9 +331,14 @@ impl ExtLegend {
                 EventResult::Consumed
             }))
             .on_row_click(Box::new(move |row, _| {
-                let ext = click_model.borrow().rows.get(row).map(|r| r.ext);
-                if let Some(ext) = ext {
-                    click_state.toggle_highlight_ext(ext);
+                let picked = click_model.borrow().rows.get(row).map(|r| (r.node, r.ext));
+                match picked {
+                    Some((Some(node), _)) => {
+                        let again = click_state.selected() == Some(node);
+                        click_state.set_selected((!again).then_some(node));
+                    }
+                    Some((None, ext)) => click_state.toggle_highlight_ext(ext),
+                    None => {}
                 }
             }))
             .build(Arc::clone(font));
@@ -359,8 +431,15 @@ fn paint_cell(model: &Model, info: &CellInfo, ctx: &mut dyn DrawCtx) {
     draw_text(ctx, info.font, &text, r, column.right_aligned(), color);
 }
 
-fn paint_header(
+/// What the header shows: the sort arrow and the first column's title.
+#[derive(Clone, Copy)]
+struct Header {
     sort: SortOrder,
+    color_by: ColorBy,
+}
+
+fn paint_header(
+    header: Header,
     col: usize,
     r: Rect,
     visuals: &agg_gui::theme::Visuals,
@@ -370,7 +449,8 @@ fn paint_header(
     let Some(&column) = Column::ALL.get(col) else {
         return;
     };
-    let mut title = column.title().to_string();
+    let Header { sort, color_by } = header;
+    let mut title = column.title(color_by).to_string();
     if sort.column == column {
         let arrow = if sort.descending {
             fa::CARET_DOWN

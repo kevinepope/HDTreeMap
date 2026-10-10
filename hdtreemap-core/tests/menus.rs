@@ -88,6 +88,7 @@ fn the_bar_lists_the_menus_and_their_items() {
         labels(&spec[2].items),
         vec![
             "Size Mode >",
+            "Colour By >",
             "Cushion Shading",
             "-",
             "Zoom In",

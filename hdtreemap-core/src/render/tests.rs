@@ -220,3 +220,54 @@ fn the_highlight_palette_dims_everything_but_one_extension() {
         }
     }
 }
+
+#[test]
+fn by_top_folder_everything_in_a_folder_shares_its_hue() {
+    let (tree, _, map) = fixture();
+    let palette = Palette::for_top_folders(&tree, tree.root());
+    assert_eq!(palette.color_by(), ColorBy::TopFolder);
+    // Children by size: movie.mp4 5000, photos 2500, notes.txt 600, misc 400.
+    let order: Vec<&str> = palette
+        .folders()
+        .iter()
+        .map(|&(n, _)| tree.name(n))
+        .collect();
+    assert_eq!(order, ["movie.mp4", "photos", "notes.txt", "misc"]);
+    let photos = palette.folders()[1].0;
+    assert_eq!(palette.folder_color(photos), HUES[1]);
+    let colors = palette.colors(&tree, &map);
+    for (r, color) in map.rects().iter().zip(&colors) {
+        if r.kind != RectKind::File {
+            continue;
+        }
+        let top = if tree.node(r.node).map(|n| n.parent()) == Some(tree.root()) {
+            r.node
+        } else {
+            photos
+        };
+        assert_eq!(*color, palette.folder_color(top), "{}", tree.name(r.node));
+    }
+    // Both photos share the folder's hue; the cushions still tell them apart when drawn.
+    let jpgs: Vec<_> = map
+        .rects()
+        .iter()
+        .zip(&colors)
+        .filter(|(r, _)| tree.name(r.node).ends_with(".jpg"))
+        .map(|(_, c)| *c)
+        .collect();
+    assert_eq!(jpgs, [HUES[1], HUES[1]]);
+    // A highlight dims everything but the highlighted extension's files.
+    let jpg = (0..tree.ext_count() as u16)
+        .find(|&e| tree.ext_name(e) == "jpg")
+        .expect("jpg");
+    let lit = palette
+        .highlighting(jpg, tree.ext_count())
+        .colors(&tree, &map);
+    for ((r, base), lit) in map.rects().iter().zip(&colors).zip(&lit) {
+        if r.kind == RectKind::File && tree.name(r.node).ends_with(".jpg") {
+            assert_eq!(base, lit);
+        } else if r.kind.is_painted() {
+            assert!(lit[0] <= base[0] * 0.5 + 1e-6);
+        }
+    }
+}

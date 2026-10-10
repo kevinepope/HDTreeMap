@@ -81,11 +81,12 @@ pub fn rasterise(
         return pixels;
     }
 
+    let colors = palette.colors(tree, layout);
     let leaves: Vec<(&LayoutRect, Rgb)> = layout
         .rects()
         .iter()
-        .filter(|r| r.kind.is_painted())
-        .map(|r| (r, palette.rect_color(tree, r)))
+        .zip(colors)
+        .filter(|(r, _)| r.kind.is_painted())
         .collect();
     let bands = height.div_ceil(BAND_ROWS) as usize;
     let bins = Bins::build(leaves.len(), bands, |i| {

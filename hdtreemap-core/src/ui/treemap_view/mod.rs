@@ -6,9 +6,9 @@
 //! pixels, top row first) and draws the raster with `draw_image_rgba_arc`, so agg-gui's
 //! GPU backend keeps the texture while the `Arc` is unchanged. It lays out again only when
 //! the physical size (window size × DPI scale), the zoom root or the tree (new scan, size
-//! mode) changes, and rasterises again only then or when the shading changes. Hover,
-//! selection and the folder outline are vector strokes drawn over the image, so moving the
-//! mouse never re-rasterises.
+//! mode) changes, and rasterises again only then or when the shading or the palette (the
+//! colour scheme) changes. Hover, selection and the folder outline are vector strokes
+//! drawn over the image, so moving the mouse never re-rasterises.
 //!
 //! Coordinates: agg-gui hands the widget Y-up logical points; the layout and raster are in
 //! Y-down physical pixels, capped in total (`geometry.rs`). `to_map` / `rect_to_local`
@@ -147,8 +147,16 @@ impl TreemapView {
             tree_version: self.state.tree_version(),
         };
         let shading = self.state.shading();
+        let Some(shared_palette) = self.state.palette() else {
+            self.drop_map();
+            return;
+        };
         let fresh_layout = self.cache.as_ref().is_some_and(|c| c.key == key);
-        if fresh_layout && self.cache.as_ref().is_some_and(|c| c.shading == shading) {
+        let fresh_look = self
+            .cache
+            .as_ref()
+            .is_some_and(|c| c.shading == shading && Rc::ptr_eq(&c.palette, &shared_palette));
+        if fresh_layout && fresh_look {
             return;
         }
         if width == 0 || height == 0 {
@@ -159,14 +167,10 @@ impl TreemapView {
         let previous = self.cache.take();
         let state = self.state.clone();
         let params = self.params;
-        let Some(shared_palette) = state.palette() else {
-            self.drop_map();
-            return;
-        };
         let next = state.with_result(|result, _| {
             let tree = &result.tree;
             let (map, palette) = match previous {
-                Some(c) if fresh_layout => (c.layout, c.palette),
+                Some(c) if fresh_layout => (c.layout, shared_palette),
                 _ => {
                     let started = Instant::now();
                     let bounds = PxRect::new(0.0, 0.0, f64::from(width), f64::from(height));

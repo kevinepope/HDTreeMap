@@ -7,7 +7,8 @@
 //!   unless it is confirmed, which this never does);
 //! - `menu`: click the in-window menu bar's View menu (use with `HDTREEMAP_IN_WINDOW_MENU=1`
 //!   on macOS, where the system bar is used otherwise);
-//! - `about`: open the About sheet.
+//! - `about`: open the About sheet;
+//! - `color-folder`: click the toolbar's "By Folder" switch (colour by top-level folder).
 //!
 //! Only input is synthesised here; every widget is the core's.
 
@@ -15,6 +16,7 @@ use agg_gui::widget::{find_widget_by_id, find_widget_screen_rect};
 use agg_gui::{App, Modifiers, MouseButton, Rect};
 use hdtreemap_core::state::Screen;
 use hdtreemap_core::ui::context_menu::{ContextMenuHost, CONTEXT_MENU_ID};
+use hdtreemap_core::ui::main_view::COLOR_BY_ID;
 use hdtreemap_core::ui::treemap_view::TREEMAP_ID;
 use hdtreemap_core::AppState;
 
@@ -25,6 +27,7 @@ pub enum Show {
     Trash,
     Menu,
     About,
+    ColorFolder,
 }
 
 impl Show {
@@ -35,6 +38,7 @@ impl Show {
             "trash" => Some(Show::Trash),
             "menu" => Some(Show::Menu),
             "about" => Some(Show::About),
+            "color-folder" => Some(Show::ColorFolder),
             _ => None,
         }
     }
@@ -88,6 +92,14 @@ impl Script {
                 }
             }
             (Show::About, 5) => state.show_about(),
+            (Show::ColorFolder, 5) => {
+                if let Some(switch) = find_widget_screen_rect(app.root(), COLOR_BY_ID) {
+                    let (x, y) = centre_down(app, switch, 0.75, 0.5);
+                    app.on_mouse_move(x, y);
+                    app.on_mouse_down(x, y, MouseButton::Left, Modifiers::default());
+                    app.on_mouse_up(x, y, MouseButton::Left, Modifiers::default());
+                }
+            }
             _ => {}
         }
     }

@@ -1,13 +1,22 @@
-//! The treemap's colours (`docs/PLAN.md` §3.4): one of [`HUES`] for each of the extensions
-//! using the most space, neutral grey for every other file, and a darker grey for blocks
-//! that stand for several items (aggregates and folders too small to open), the WinDirStat
-//! scheme. Built from the scan's [`ExtTable`] once per tree (`AppState::palette`); the
-//! extension legend's swatches read the same colours through [`Palette::ext_color`].
+//! The treemap's colours (`docs/PLAN.md` §3.4), by one of two schemes ([`ColorBy`]):
+//!
+//! - **by file type** (the default): one of [`HUES`] for each of the extensions using the
+//!   most space, neutral grey for every other file, and a darker grey for blocks that stand
+//!   for several items (aggregates and folders too small to open), the WinDirStat scheme.
+//!   Built from the scan's [`ExtTable`] ([`Palette::from_extensions`]).
+//! - **by top-level folder**: one of [`HUES`] for each of the biggest children of the zoom
+//!   root, shared by everything inside it (blocks a little darker), grey for the rest
+//!   ([`Palette::for_top_folders`]). The cushions still show the structure inside.
+//!
+//! `AppState::palette` builds it once per tree (and zoom root, by folder); the legend's
+//! swatches read the same colours ([`Palette::ext_color`], [`Palette::folder_color`]).
 //! [`Palette::highlighting`] derives the palette of the extension highlight: every colour
-//! dimmed but the chosen extension's.
+//! dimmed but the chosen extension's files.
 
-use crate::layout::{LayoutRect, RectKind};
-use crate::model::{ExtTable, SizeMode, Tree};
+use std::collections::HashMap;
+
+use crate::layout::{LayoutRect, RectKind, TreemapLayout, NO_PARENT};
+use crate::model::{ExtTable, NodeId, SizeMode, Tree};
 
 /// Linear RGB in `0.0..=1.0`.
 pub type Rgb = [f32; 3];
@@ -43,6 +52,28 @@ const fn rgb(r: u8, g: u8, b: u8) -> Rgb {
 
 /// Share of its brightness a colour keeps when another extension is highlighted.
 pub const DIMMED: f32 = 0.22;
+/// Share of its folder's brightness a block (folder block, merged leftovers) keeps when
+/// colouring by top-level folder.
+pub const FOLDER_BLOCK_SHADE: f32 = 0.7;
+
+/// What decides a rectangle's colour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ColorBy {
+    /// The file's extension.
+    #[default]
+    Extension,
+    /// The top-level folder (child of the zoom root) it is in.
+    TopFolder,
+}
+
+impl ColorBy {
+    pub fn label(self) -> &'static str {
+        match self {
+            ColorBy::Extension => "File Type",
+            ColorBy::TopFolder => "Top-Level Folder",
+        }
+    }
+}
 
 /// Colour per extension id. See the module docs.
 #[derive(Clone, Debug)]
@@ -55,6 +86,14 @@ pub struct Palette {
     other: Rgb,
     /// Aggregates and folder blocks ([`FOLDER_BLOCK`]).
     block: Rgb,
+    color_by: ColorBy,
+    /// By top-level folder: the zoom root and the colour of each of its children.
+    zoom_root: NodeId,
+    folders: HashMap<NodeId, Rgb>,
+    /// `(folder, colour)` in hue order, biggest first.
+    folder_order: Vec<(NodeId, Rgb)>,
+    /// Every rectangle but this extension's files is dimmed.
+    highlight: Option<u16>,
 }
 
 impl Default for Palette {
@@ -64,6 +103,11 @@ impl Default for Palette {
             assigned: Vec::new(),
             other: OTHER_FILES,
             block: FOLDER_BLOCK,
+            color_by: ColorBy::Extension,
+            zoom_root: NodeId::NONE,
+            folders: HashMap::new(),
+            folder_order: Vec::new(),
+            highlight: None,
         }
     }
 }
@@ -102,34 +146,62 @@ impl Palette {
         }
     }
 
-    /// This palette with every colour dimmed except that of extension id `ext` (the
-    /// extension legend's highlight). `ext_count` is the tree's number of extension ids.
-    pub fn highlighting(&self, ext: u16, ext_count: usize) -> Self {
-        let by_ext = (0..ext_count.max(self.by_ext.len()))
-            .map(|e| {
-                let color = self.ext_color(e as u16);
-                Some(if e == usize::from(ext) {
-                    color
-                } else {
-                    dim(color)
-                })
-            })
+    /// Colour by the top-level folders of `zoom_root`: the [`HUES`] go to its biggest
+    /// children (by the tree's active size; files count too), grey to the rest.
+    pub fn for_top_folders(tree: &Tree, zoom_root: NodeId) -> Self {
+        let folder_order: Vec<(NodeId, Rgb)> = tree
+            .children_by_size(zoom_root)
+            .into_iter()
+            .filter(|&c| tree.size(c) > 0)
+            .zip(HUES.iter().copied())
             .collect();
         Self {
-            by_ext,
-            assigned: self.assigned.clone(),
-            other: dim(self.other),
-            block: dim(self.block),
+            color_by: ColorBy::TopFolder,
+            zoom_root,
+            folders: folder_order.iter().copied().collect(),
+            folder_order,
+            ..Self::default()
         }
     }
 
-    /// The colour of files with extension id `ext`.
+    /// Which scheme this palette colours by.
+    pub fn color_by(&self) -> ColorBy {
+        self.color_by
+    }
+
+    /// This palette with every rectangle dimmed except the files of extension id `ext`
+    /// (the extension legend's highlight).
+    pub fn highlighting(&self, ext: u16, _ext_count: usize) -> Self {
+        Self {
+            highlight: Some(ext),
+            ..self.clone()
+        }
+    }
+
+    /// The colour of top-level folder (or file) `node` when colouring by folder: its hue,
+    /// or grey when it has none.
+    pub fn folder_color(&self, node: NodeId) -> Rgb {
+        self.folders.get(&node).copied().unwrap_or(self.other)
+    }
+
+    /// The top-level folders that have a hue, biggest first (by folder only).
+    pub fn folders(&self) -> &[(NodeId, Rgb)] {
+        &self.folder_order
+    }
+
+    /// The colour of files with extension id `ext` (dimmed in a highlighting palette
+    /// unless `ext` is the highlighted one).
     pub fn ext_color(&self, ext: u16) -> Rgb {
-        self.by_ext
+        let color = self
+            .by_ext
             .get(usize::from(ext))
             .copied()
             .flatten()
-            .unwrap_or(self.other)
+            .unwrap_or(self.other);
+        match self.highlight {
+            Some(lit) if lit != ext => dim(color),
+            _ => color,
+        }
     }
 
     /// The extensions that have a hue, biggest first.
@@ -137,13 +209,73 @@ impl Palette {
         &self.assigned
     }
 
-    /// The base colour of a laid-out rectangle.
+    /// The base colour of a laid-out rectangle by file type (the folder scheme needs the
+    /// layout: [`Palette::colors`]).
     pub fn rect_color(&self, tree: &Tree, rect: &LayoutRect) -> Rgb {
         match rect.kind {
-            RectKind::File => tree
-                .node(rect.node)
-                .map_or(self.other, |n| self.ext_color(n.ext())),
-            RectKind::Dir | RectKind::FolderBlock | RectKind::Aggregate => self.block,
+            RectKind::File => match tree.node(rect.node) {
+                Some(n) => self.ext_color(n.ext()),
+                None => self.dim_unless_highlighted(tree, rect, self.other),
+            },
+            RectKind::Dir | RectKind::FolderBlock | RectKind::Aggregate => {
+                self.dim_unless_highlighted(tree, rect, self.block)
+            }
+        }
+    }
+
+    /// The colour of every rectangle of `layout`, by index (unpainted directories get the
+    /// block colour).
+    pub fn colors(&self, tree: &Tree, layout: &TreemapLayout) -> Vec<Rgb> {
+        let rects = layout.rects();
+        if self.color_by == ColorBy::Extension {
+            return rects.iter().map(|r| self.rect_color(tree, r)).collect();
+        }
+        // The rectangle of each one's top-level folder: rectangles are in pre-order, so a
+        // parent's entry is ready before its children's.
+        let mut tops: Vec<u32> = Vec::with_capacity(rects.len());
+        let mut colors = Vec::with_capacity(rects.len());
+        for (i, r) in rects.iter().enumerate() {
+            let top = match r.parent {
+                NO_PARENT => i as u32,
+                p if rects
+                    .get(p as usize)
+                    .is_some_and(|pr| pr.parent == NO_PARENT) =>
+                {
+                    i as u32
+                }
+                p => tops.get(p as usize).copied().unwrap_or(i as u32),
+            };
+            tops.push(top);
+            let top_node = rects[top as usize].node;
+            let at_root = r.parent == NO_PARENT
+                || (r.kind == RectKind::Aggregate && r.node == self.zoom_root);
+            let color = if at_root || top_node == self.zoom_root {
+                self.block
+            } else {
+                let hue = self.folder_color(top_node);
+                match r.kind {
+                    RectKind::File => hue,
+                    RectKind::Dir | RectKind::FolderBlock | RectKind::Aggregate => {
+                        hue.map(|v| v * FOLDER_BLOCK_SHADE)
+                    }
+                }
+            };
+            colors.push(self.dim_unless_highlighted(tree, r, color));
+        }
+        colors
+    }
+
+    /// `color`, dimmed while an extension is highlighted and `rect` is not one of its files.
+    fn dim_unless_highlighted(&self, tree: &Tree, rect: &LayoutRect, color: Rgb) -> Rgb {
+        let Some(ext) = self.highlight else {
+            return color;
+        };
+        let lit =
+            rect.kind == RectKind::File && tree.node(rect.node).is_some_and(|n| n.ext() == ext);
+        if lit {
+            color
+        } else {
+            dim(color)
         }
     }
 }

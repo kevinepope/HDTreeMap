@@ -10,7 +10,7 @@
 //! - [`AppState::tree_version`] — the finished tree changed (a new scan, a size-mode
 //!   re-sort; later, Move to Trash). The treemap rebuilds its palette and layout.
 //! - [`AppState::map_version`] — anything that changes the map's picture: the tree, the
-//!   zoom root, the shading. The breadcrumb rebuilds on it.
+//!   zoom root, the shading, the colour scheme. The breadcrumb rebuilds on it.
 //! - [`AppState::detail_version`] — anything the status bar shows: hover, selection, the
 //!   highlighted extension, and every map change. Mouse moves bump only this one, so they
 //!   never re-rasterise the map.
@@ -26,7 +26,7 @@ use super::derived::DerivedCache;
 use super::AppState;
 use crate::layout::AggregateInfo;
 use crate::model::{NodeId, SizeMode};
-use crate::render::Shading;
+use crate::render::{ColorBy, Shading};
 
 /// Default share of the window width for the left column (folder tree and legend).
 pub const SIDE_SPLIT_DEFAULT: f64 = 0.28;
@@ -59,6 +59,7 @@ pub(super) struct ViewState {
     pending_highlight: RefCell<Option<String>>,
     shading: Cell<Shading>,
     size_mode: Cell<SizeMode>,
+    color_by: Cell<ColorBy>,
     side_split: SplitterRatio,
     tree_split: SplitterRatio,
     pub(super) derived: DerivedCache,
@@ -78,6 +79,7 @@ impl ViewState {
             pending_highlight: RefCell::new(None),
             shading: Cell::new(Shading::default()),
             size_mode: Cell::new(SizeMode::default()),
+            color_by: Cell::new(ColorBy::default()),
             side_split: SplitterRatio::new(SIDE_SPLIT_DEFAULT),
             tree_split: SplitterRatio::new(TREE_SPLIT_DEFAULT),
             derived: DerivedCache::default(),
@@ -269,6 +271,20 @@ impl AppState {
     pub fn set_shading(&self, shading: Shading) {
         if self.shading() != shading {
             self.view().shading.set(shading);
+            self.map_changed();
+        }
+    }
+
+    /// What the map colours by (kept across scans).
+    pub fn color_by(&self) -> ColorBy {
+        self.view().color_by.get()
+    }
+
+    /// Colour the map by file type or by top-level folder. The map re-rasterises and the
+    /// legend lists extensions or top folders.
+    pub fn set_color_by(&self, color_by: ColorBy) {
+        if self.color_by() != color_by {
+            self.view().color_by.set(color_by);
             self.map_changed();
         }
     }

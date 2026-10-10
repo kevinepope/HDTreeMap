@@ -13,7 +13,7 @@ use super::node_actions::{NodeAction, NodeActions};
 use super::start_screen::start_scan;
 use crate::model::{NodeId, SizeMode};
 use crate::platform::{ActionOutcome, PlatformServices};
-use crate::render::Shading;
+use crate::render::{ColorBy, Shading};
 use crate::state::{AppState, ScanTarget, Screen};
 
 /// The project's home page (Help ▸ View on GitHub, the About sheet).
@@ -40,6 +40,8 @@ pub enum Command {
     SizeMode(SizeMode),
     /// View ▸ Cushion Shading.
     ToggleCushions,
+    /// View ▸ Colour By.
+    ColorBy(ColorBy),
     /// View ▸ Zoom In: to the selected folder (or the selected file's folder).
     ZoomIn,
     /// View ▸ Zoom Out one level.
@@ -68,6 +70,8 @@ impl Command {
             Command::SizeMode(SizeMode::Allocated) => "view.size.allocated".into(),
             Command::SizeMode(SizeMode::Apparent) => "view.size.apparent".into(),
             Command::ToggleCushions => "view.cushions".into(),
+            Command::ColorBy(ColorBy::Extension) => "view.color.type".into(),
+            Command::ColorBy(ColorBy::TopFolder) => "view.color.folder".into(),
             Command::ZoomIn => "view.zoom-in".into(),
             Command::ZoomOut => "view.zoom-out".into(),
             Command::ZoomRoot => "view.zoom-root".into(),
@@ -92,6 +96,8 @@ impl Command {
             Command::SizeMode(SizeMode::Allocated),
             Command::SizeMode(SizeMode::Apparent),
             Command::ToggleCushions,
+            Command::ColorBy(ColorBy::Extension),
+            Command::ColorBy(ColorBy::TopFolder),
             Command::ZoomIn,
             Command::ZoomOut,
             Command::ZoomRoot,
@@ -187,7 +193,7 @@ impl Commands {
             Command::Trash => self
                 .selection()
                 .is_some_and(|n| self.nodes.enabled(n, NodeAction::Trash)),
-            Command::SizeMode(_) | Command::ToggleCushions => self.has_map(),
+            Command::SizeMode(_) | Command::ToggleCushions | Command::ColorBy(_) => self.has_map(),
             Command::ZoomIn => self.zoom_in_target().is_some(),
             Command::ZoomOut | Command::ZoomRoot => self.zoomed_in(),
             Command::ClearHighlight => self.has_map() && self.state.highlight_ext().is_some(),
@@ -195,12 +201,13 @@ impl Commands {
         }
     }
 
-    /// The check or radio mark of `command`: `Some(on)` for the size modes and cushion
-    /// shading, `None` for plain commands.
+    /// The check or radio mark of `command`: `Some(on)` for the size modes, the colour
+    /// schemes and cushion shading, `None` for plain commands.
     pub fn checked(&self, command: Command) -> Option<bool> {
         match command {
             Command::SizeMode(mode) => Some(self.state.size_mode() == mode),
             Command::ToggleCushions => Some(self.state.shading() == Shading::Cushion),
+            Command::ColorBy(by) => Some(self.state.color_by() == by),
             _ => None,
         }
     }
@@ -232,6 +239,7 @@ impl Commands {
             Command::CopyPath => self.on_selection(NodeAction::CopyPath),
             Command::Trash => self.on_selection(NodeAction::Trash),
             Command::SizeMode(mode) => state.set_size_mode(mode),
+            Command::ColorBy(by) => state.set_color_by(by),
             Command::ToggleCushions => state.set_shading(match state.shading() {
                 Shading::Cushion => Shading::Flat,
                 Shading::Flat => Shading::Cushion,

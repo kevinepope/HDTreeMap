@@ -108,7 +108,7 @@ wasm-pack build hdtreemap-wasm --target web --out-dir ../demo/public/pkg --no-ty
 ```
 
 `HDTREEMAP_SCREENSHOT=out.png cargo run -p hdtreemap-native` captures a frame and exits;
-`HDTREEMAP_SCREENSHOT_SHOW=context-menu|trash|menu|about` opens that UI first (with
+`HDTREEMAP_SCREENSHOT_SHOW=context-menu|trash|menu|about|color-folder` opens that UI first (with
 `HDTREEMAP_IN_WINDOW_MENU=1` for the in-window bar on macOS). Never confirm a trash on real
 files while testing: point it at a temporary folder.
 `HDTREEMAP_STATS=1` prints treemap layout / raster times and per-frame layout+paint time.

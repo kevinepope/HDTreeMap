@@ -13,19 +13,22 @@
 //! The highlighted file rectangles are counted along with each dimmed raster, for
 //! `HDTREEMAP_STATS` and tests ([`super::TreemapView::highlighted_rects`]).
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use web_time::Instant;
 
 use super::{ms, LayoutKey, TreemapView};
 use crate::layout::RectKind;
-use crate::render::{rasterise, stats_enabled, Shading};
+use crate::render::{rasterise, stats_enabled, Palette, Shading};
 
 /// The dimmed raster for one extension, layout and shading.
 struct Dimmed {
     ext: u16,
     key: LayoutKey,
     shading: Shading,
+    /// The palette it dims (the colour scheme).
+    palette: Rc<Palette>,
     pixels: Arc<Vec<u8>>,
     /// File rectangles of the extension in the layout.
     files: usize,
@@ -59,11 +62,12 @@ impl TreemapView {
             self.highlight.painted = 0;
             return Some(Arc::clone(&cache.pixels));
         };
-        let fresh = self
-            .highlight
-            .dimmed
-            .as_ref()
-            .is_some_and(|d| d.ext == ext && d.key == cache.key && d.shading == cache.shading);
+        let fresh = self.highlight.dimmed.as_ref().is_some_and(|d| {
+            d.ext == ext
+                && d.key == cache.key
+                && d.shading == cache.shading
+                && Rc::ptr_eq(&d.palette, &cache.palette)
+        });
         if !fresh {
             let started = Instant::now();
             let (key, shading) = (cache.key, cache.shading);
@@ -91,6 +95,7 @@ impl TreemapView {
                     ext,
                     key,
                     shading,
+                    palette: Rc::clone(&cache.palette),
                     pixels: Arc::new(pixels),
                     files,
                 }
