@@ -30,6 +30,8 @@ app genuinely needs one (the treemap view).
 ```
 hdtreemap-core/     rlib: everything testable, no platform code
   src/fonts.rs        theme + fonts, Font Awesome code points (fa::*)
+  src/theme.rs        Theme { Light (default), Dark, System }: agg-gui Visuals per theme plus
+                      HDTreeMap's map greys, outline and icon colours
   src/format.rs       human-readable sizes
   src/icon.rs         the app icon, drawn by the treemap layout + rasteriser (window icon,
                       release assets)
@@ -56,6 +58,7 @@ hdtreemap-core/     rlib: everything testable, no platform code
                       throttled live ticks of the partial map; persist.rs: settings and
                       recent scans; view.rs: zoom, hover, selection, highlight, shading,
                       colour scheme, size mode, versions;
+                      theme.rs: theme choice + reported OS appearance, theme_version;
                       derived.rs: shared palette and zoom-root ExtTable; volumes.rs: cached
                       volume list; edits.rs: remove_node, folder rescan + splice;
                       notices.rs: the agg-gui Toasts queue, trash/About sheets, context-menu requests, quit
@@ -80,7 +83,9 @@ hdtreemap-native/   bin `hdtreemap`: agg-gui-shell + NativePlatform (sysinfo, rf
                     menu_bar.rs (macOS system menu from the core's spec), show.rs
                     (HDTREEMAP_SCREENSHOT_SHOW input replay), persist.rs (settings.json,
                     window.json in the OS config dir), a ShellHost for Quit and saving
+                    theme.rs: OS appearance via winit for Match System, title-bar theme
 hdtreemap-wasm/     cdylib: agg-gui-web-shell + WebPlatform (DemoPlatform that opens links),
+                    prefers-color-scheme for Match System,
                     localStorage settings, ?drive=ID / ?stats, hdtreemap_status() export
 demo/               static page + bun/vite bundle for GitHub Pages
 ```
@@ -135,6 +140,8 @@ live ticks, and a scan's slowest folders (`?stats` on the web, to the console).
 without it use neither).
 `cargo run --release -p hdtreemap-native -- --dump-top 15 PATH` checks the scanner headless.
 Run `scripts/pre-commit-check.sh` (or `.ps1`) before every commit; it mirrors CI.
+On macOS, `run-mac.command` (double-click, or `./run-mac.command [PATH | --demo ID]`) builds
+the release binary and launches it.
 
 ## Workflow: commit as you go
 
