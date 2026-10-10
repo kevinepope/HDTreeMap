@@ -6,11 +6,13 @@
 //! Everything is a closure over the app's `Commands`, evaluated when a menu opens: a menu's
 //! rows (and the Scan Drive list) are rebuilt from the spec then, and enable states and
 //! check marks are asked then. A picked item runs the same command the in-window menu and
-//! the shortcuts run (agg-gui-shell queues it to the next idle pass of its loop).
+//! the shortcuts run (agg-gui-shell queues it to the next idle pass of its loop). Each item
+//! carries its spec's shortcut, so the menu shows its keys; agg-gui-shell lets the menu
+//! claim only the Command chords, and the app's `CommandKeys` runs the rest.
 
 use std::rc::Rc;
 
-use agg_gui_shell::menu_bar::{self as native, MenuBarModel, MenuItemModel};
+use agg_gui_shell::menu_bar::{self as native, MenuBarModel, MenuItemModel, MenuShortcut};
 use hdtreemap_core::ui::commands::Commands;
 use hdtreemap_core::ui::menus::{menu_bar_spec, MenuRole, MenuSpec};
 
@@ -73,6 +75,7 @@ fn items(commands: &Commands, specs: &[MenuSpec]) -> Vec<MenuItemModel> {
                 MenuItemModel {
                     text: item.label.clone(),
                     role: role(item.role),
+                    shortcut: item.shortcut.and_then(MenuShortcut::parse),
                     is_enabled: Some(Rc::new(move || enabled.enabled(command))),
                     is_checked: commands.checked(command).is_some().then(|| {
                         Rc::new(move || checked.checked(command) == Some(true))
@@ -125,6 +128,27 @@ mod tests {
             .expect("item");
         assert!(cushions.is_checked.is_some());
         assert!(!native::is_enabled(cushions));
+    }
+
+    #[test]
+    fn native_items_show_their_shortcuts() {
+        let state = AppState::new();
+        let platform: Rc<dyn PlatformServices> = Rc::new(crate::platform::NativePlatform);
+        let commands = Commands::new(&state, &platform);
+        let model = model(&commands);
+        let shortcut = |menu: usize, text: &str| {
+            native::children_of(&model.menus[menu])
+                .into_iter()
+                .find(|i| i.text == text)
+                .unwrap_or_else(|| panic!("no item {text:?}"))
+                .shortcut
+        };
+        assert_eq!(shortcut(1, "Rescan"), MenuShortcut::parse("Ctrl+R"));
+        assert_eq!(shortcut(2, "Copy Path"), MenuShortcut::parse("Ctrl+C"));
+        assert_eq!(shortcut(0, "Quit"), MenuShortcut::parse("Ctrl+Q"));
+        assert!(shortcut(1, "Rescan").is_some());
+        // An item without a shortcut has none.
+        assert_eq!(shortcut(0, "About HDTreeMap"), None);
     }
 
     #[test]
