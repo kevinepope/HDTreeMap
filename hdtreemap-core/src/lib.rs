@@ -15,6 +15,7 @@
 
 pub mod fonts;
 pub mod format;
+pub mod model;
 pub mod platform;
 pub mod state;
 pub mod ui;
