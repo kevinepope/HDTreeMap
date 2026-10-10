@@ -7,7 +7,9 @@
 //! a new tab): the browser cannot read the visitor's disks, so the demo shows a set of
 //! descriptive simulated drives. `?drive=<id>` in the page URL starts scanning that drive
 //! at once (as `--demo <id>` does natively), `?stats` logs `HDTREEMAP_STATS`-style timing
-//! lines to the console, and [`hdtreemap_status`] reports the screen
+//! lines to the console, View ▸ Theme ▸ Match System follows the browser's
+//! `prefers-color-scheme` (watched with `matchMedia`, so it switches live), and
+//! [`hdtreemap_status`] reports the screen
 //! and scan state for page automation (load and frame-time checks). Settings (size mode, colours, splitters, recent drives)
 //! are remembered in `localStorage` under [`SETTINGS_KEY`]; when storage is unavailable
 //! (private mode, blocked) the demo simply starts from the defaults.
@@ -75,7 +77,15 @@ impl WebShellHost for Host {
     export function hdtreemap_url_param(name) { \
     try { return new URLSearchParams(window.location.search).get(name); } \
     catch (e) { return null; } } \
-    export function hdtreemap_console_log(line) { console.log(line); }")]
+    export function hdtreemap_console_log(line) { console.log(line); } \
+    function hdtreemap_scheme() { \
+    try { return window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null; } \
+    catch (e) { return null; } } \
+    export function hdtreemap_prefers_dark() { \
+    const q = hdtreemap_scheme(); return q ? q.matches : undefined; } \
+    export function hdtreemap_watch_color_scheme(cb) { \
+    const q = hdtreemap_scheme(); if (!q || !q.addEventListener) { return false; } \
+    q.addEventListener('change', (e) => cb(e.matches)); return true; }")]
 extern "C" {
     /// Open `url` in a new browser tab; false when the browser blocked it.
     fn hdtreemap_open_url(url: &str) -> bool;
@@ -83,6 +93,10 @@ extern "C" {
     fn hdtreemap_url_param(name: &str) -> Option<String>;
     /// `console.log(line)`.
     fn hdtreemap_console_log(line: &str);
+    /// The page's `prefers-color-scheme: dark` (`None` without `matchMedia`).
+    fn hdtreemap_prefers_dark() -> Option<bool>;
+    /// Call `cb(dark)` whenever `prefers-color-scheme` changes; false when it cannot.
+    fn hdtreemap_watch_color_scheme(cb: &Closure<dyn Fn(bool)>) -> bool;
 }
 
 thread_local! {
@@ -91,8 +105,9 @@ thread_local! {
 }
 
 /// The app's state for page automation, as JSON: `{"screen": "start" | "scanning" |
-/// "results", "files": .., "live_ticks": .., "rasters": ..}` (files scanned so far, or in
-/// the result).
+/// "results", "files": .., "live_ticks": .., "rasters": .., "theme": "light" | "dark" |
+/// "system", "dark": ..}` (files scanned so far, or in the result; whether the look shown
+/// is dark).
 #[wasm_bindgen]
 pub fn hdtreemap_status() -> String {
     STATE.with(|s| {
@@ -112,9 +127,11 @@ pub fn hdtreemap_status() -> String {
             .unwrap_or(0);
         format!(
             "{{\"screen\": \"{screen}\", \"files\": {files}, \"live_ticks\": {}, \
-             \"rasters\": {}}}",
+             \"rasters\": {}, \"theme\": \"{}\", \"dark\": {}}}",
             state.live_ticks(),
-            state.map_counters().rasters
+            state.map_counters().rasters,
+            state.theme().key(),
+            state.is_dark()
         )
     })
 }
@@ -183,6 +200,16 @@ pub fn main() -> Result<(), JsValue> {
             let target = ScanTarget::volume(&volume);
             let source = platform.scan_source(&target);
             state.start_scan(target, source);
+        }
+        // Match System: the browser's colour scheme, now and as it changes.
+        state.set_system_dark(hdtreemap_prefers_dark());
+        let watched = state.clone();
+        let on_change = Closure::<dyn Fn(bool)>::new(move |dark| {
+            watched.set_system_dark(Some(dark));
+        });
+        if hdtreemap_watch_color_scheme(&on_change) {
+            // Lives as long as the page.
+            on_change.forget();
         }
         STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
         let host = Host {

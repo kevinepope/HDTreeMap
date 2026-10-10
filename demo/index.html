@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#1b1b1b" />
+    <meta name="theme-color" content="#ebebf2" />
     <meta
       name="description"
       content="HDTreeMap: a small, fast disk-usage treemap viewer for macOS, Windows and Linux, built in Rust on agg-gui. This live demo scans simulated drives in your browser."
@@ -32,7 +32,8 @@
       body {
         margin: 0;
         padding: 0;
-        background: #1b1b1b;
+        /* The app's light panel colour, so nothing flashes before the first frame. */
+        background: #ebebf2;
         overflow: hidden;
         height: 100%;
         height: 100dvh;
@@ -50,7 +51,33 @@
         touch-action: none;
         outline: none;
       }
+      html.hdtreemap-dark,
+      html.hdtreemap-dark body {
+        background: #212126;
+      }
     </style>
+    <script>
+      // Before the first paint: match the page to the remembered theme (the app's
+      // localStorage blob, "hdtreemap.settings"; light when there is none), so a dark
+      // choice does not flash light while the wasm loads. No visible UI here.
+      (function () {
+        var theme = "light";
+        try {
+          var blob = JSON.parse(localStorage.getItem("hdtreemap.settings") || "{}");
+          if (blob && typeof blob.theme === "string") theme = blob.theme;
+        } catch (e) {}
+        var dark =
+          theme === "dark" ||
+          (theme === "system" &&
+            !!window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) {
+          document.documentElement.className = "hdtreemap-dark";
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", "#212126");
+        }
+      })();
+    </script>
   </head>
   <body>
     <canvas id="hdtreemap-canvas" tabindex="0"></canvas>

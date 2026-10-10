@@ -26,9 +26,10 @@ function showBootError(err: unknown): void {
   }
   canvas.width = Math.max(1, canvas.clientWidth || window.innerWidth);
   canvas.height = Math.max(1, canvas.clientHeight || window.innerHeight);
-  ctx.fillStyle = "#1b1b1b";
+  const dark = document.documentElement.classList.contains("hdtreemap-dark");
+  ctx.fillStyle = dark ? "#212126" : "#ebebf2";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#f2f2f2";
+  ctx.fillStyle = dark ? "#f2f2f2" : "#141419";
   ctx.font = "20px sans-serif";
   ctx.fillText("HDTreeMap failed to load.", 24, 48);
   ctx.font = "14px sans-serif";

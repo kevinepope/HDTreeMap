@@ -5,7 +5,8 @@
 //! reads the command line ([`cli`]), and hands the shared app from `hdtreemap-core` the real
 //! OS services ([`platform::NativePlatform`]) or, with `--demo`, the web demo's simulated
 //! drives. On macOS it installs the app's menus as the system menu bar ([`menu_bar`]), and
-//! it closes the window when File ▸ Quit is chosen. `--dump-top N` scans without a window
+//! it closes the window when File ▸ Quit is chosen, and it reports the OS light / dark
+//! appearance for View ▸ Theme ▸ Match System ([`theme`]). `--dump-top N` scans without a window
 //! ([`dump`]).
 //!
 //! Usage: see [`cli::USAGE`]. `HDTREEMAP_SCREENSHOT=out.png` captures one frame after
@@ -22,6 +23,7 @@ mod menu_bar;
 mod persist;
 mod platform;
 mod show;
+mod theme;
 
 use std::process::ExitCode;
 use std::rc::Rc;
@@ -142,20 +144,27 @@ fn run_app(
             let source = platform.scan_source(&target);
             state.start_scan(target, source);
         }
+        // The window's title bar follows the theme; Match System reads the OS appearance,
+        // before the first frame so a dark desktop never flashes light.
+        let mut window_theme = theme::WindowTheme::new(std::sync::Arc::clone(init.window()));
+        window_theme.sync(&state);
         let host = AppHost {
             state: state.clone(),
             script: show::Show::from_env().map(show::Script::new),
+            window_theme,
         };
         let app = build_app(state, platform, fonts);
         Ok((app, host))
     })
 }
 
-/// The shell side of the app: closes the window when File ▸ Quit was chosen, and replays
-/// `HDTREEMAP_SCREENSHOT_SHOW`'s input ([`show`]).
+/// The shell side of the app: closes the window when File ▸ Quit was chosen, keeps the
+/// window's appearance and the OS appearance in step with the theme ([`theme`]), and
+/// replays `HDTREEMAP_SCREENSHOT_SHOW`'s input ([`show`]).
 struct AppHost {
     state: AppState,
     script: Option<show::Script>,
+    window_theme: theme::WindowTheme,
 }
 
 impl ShellHost for AppHost {
@@ -166,6 +175,7 @@ impl ShellHost for AppHost {
     }
 
     fn on_idle(&mut self, _app: &mut App, control: &mut ShellControl<'_>) {
+        self.window_theme.sync(&self.state);
         self.state.save_settings(control.pointer_idle());
         if self.state.quit_requested() {
             control.request_exit();
