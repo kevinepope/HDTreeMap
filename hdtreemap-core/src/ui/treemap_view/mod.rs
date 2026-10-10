@@ -12,10 +12,22 @@
 //! Coordinates: agg-gui hands the widget Y-up logical points; the layout and raster are in
 //! Y-down physical pixels. `to_map` / `rect_to_local` convert between the two.
 //!
-//! Input: hover updates `AppState::hovered` (the status bar shows it) and the tooltip;
+//! The colours are the shared [`AppState::palette`], so the extension legend's swatches
+//! match. The outlines follow `AppState`, not just this widget's pointer: an item hovered or
+//! selected in the folder tree is outlined here too (or, when it is too small to have its
+//! own rectangle, its nearest folder that has one). While an extension is highlighted the
+//! map is drawn from a second, dimmed raster (`highlight.rs`).
+//!
+//! Input: hover updates `AppState::hovered` (the status bar shows it) and the multi-line
+//! tooltip, keyed on the hovered rectangle (`tooltip_key`) so each rectangle gets its own
+//! hover delay;
 //! a click selects; a double click zooms into the folder (or a file's folder); Backspace or
-//! the mouse back button zooms out; Escape clears the selection.
+//! the mouse back button zooms out; Escape clears the extension highlight, else the
+//! selection.
 
+mod highlight;
+
+use std::rc::Rc;
 use std::sync::Arc;
 
 use web_time::Instant;
@@ -32,6 +44,7 @@ use crate::layout::{layout, LayoutParams, PxRect, RectKind, TreemapLayout};
 use crate::model::NodeId;
 use crate::render::{rasterise, stats_enabled, Palette, Shading};
 use crate::state::{AppState, Hover};
+use highlight::Highlight;
 
 /// Widget id of the treemap.
 pub const TREEMAP_ID: &str = "treemap";
@@ -51,7 +64,7 @@ const BACK_BUTTON: MouseButton = MouseButton::Other(3);
 
 /// What a layout depends on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct LayoutKey {
+pub(super) struct LayoutKey {
     width: u32,
     height: u32,
     zoom_root: NodeId,
@@ -63,9 +76,12 @@ struct MapCache {
     key: LayoutKey,
     shading: Shading,
     layout: TreemapLayout,
-    palette: Palette,
+    palette: Rc<Palette>,
     pixels: Arc<Vec<u8>>,
 }
+
+/// A node looked up in the current layout: `(node, its rectangle or nearest folder's)`.
+type Located = Option<(NodeId, Option<usize>)>;
 
 /// The treemap widget. See the module docs.
 pub struct TreemapView {
@@ -79,8 +95,12 @@ pub struct TreemapView {
     hover_index: Option<usize>,
     /// Where the pointer last was (local, Y-up), to re-hit-test after a re-layout.
     pointer: Option<Point>,
-    /// `(node, rectangle)` of the selection in the current layout.
-    selected_index: Option<(NodeId, Option<usize>)>,
+    /// The selection in the current layout.
+    selected_index: Located,
+    /// A hover set by another view (the folder tree) in the current layout.
+    linked_hover_index: Located,
+    /// The highlighted extension's files in the current layout.
+    highlight: Highlight,
 }
 
 impl TreemapView {
@@ -97,7 +117,15 @@ impl TreemapView {
             hover_index: None,
             pointer: None,
             selected_index: None,
+            linked_hover_index: None,
+            highlight: Highlight::default(),
         }
+    }
+
+    /// How many file rectangles the extension highlight showed in the last paint (a hook
+    /// for tests and `HDTREEMAP_STATS`).
+    pub fn highlighted_rects(&self) -> usize {
+        self.highlight.painted()
     }
 
     /// Bring the layout and raster up to date for the current size and state.
@@ -122,7 +150,11 @@ impl TreemapView {
         let previous = self.cache.take();
         let state = self.state.clone();
         let params = self.params;
-        let next = state.with_result(|result, extensions| {
+        let Some(shared_palette) = state.palette() else {
+            self.drop_map();
+            return;
+        };
+        let next = state.with_result(|result, _| {
             let tree = &result.tree;
             let (map, palette) = match previous {
                 Some(c) if fresh_layout => (c.layout, c.palette),
@@ -130,8 +162,7 @@ impl TreemapView {
                     let started = Instant::now();
                     let bounds = PxRect::new(0.0, 0.0, f64::from(width), f64::from(height));
                     let map = layout(tree, key.zoom_root, bounds, &params);
-                    let palette =
-                        Palette::from_extensions(extensions, tree.size_mode(), tree.ext_count());
+                    let palette = shared_palette;
                     state.count_layout();
                     if stats_enabled() {
                         eprintln!(
@@ -164,7 +195,7 @@ impl TreemapView {
         let relaid = !fresh_layout;
         self.cache = next;
         if relaid {
-            self.selected_index = None;
+            self.forget_lookups();
             self.rehover();
         }
     }
@@ -172,7 +203,14 @@ impl TreemapView {
     fn drop_map(&mut self) {
         self.cache = None;
         self.hover_index = None;
+        self.forget_lookups();
+    }
+
+    /// The layout changed: every rectangle index looked up in the old one is stale.
+    fn forget_lookups(&mut self) {
         self.selected_index = None;
+        self.linked_hover_index = None;
+        self.highlight.forget();
     }
 
     /// Hit-test the last pointer position again (the map under it changed).
@@ -270,19 +308,46 @@ impl TreemapView {
         agg_gui::animation::request_draw();
     }
 
-    /// The selection's rectangle in the current layout (looked up once per change).
+    /// The rectangle showing `node` (or its nearest laid-out folder), looked up once per
+    /// change through `slot`.
+    fn locate(&self, slot: &mut Located, node: NodeId) -> Option<usize> {
+        if let Some((cached, index)) = *slot {
+            if cached == node {
+                return index;
+            }
+        }
+        let map = &self.cache.as_ref()?.layout;
+        let index = self
+            .state
+            .with_result(|r, _| map.index_of_nearest(&r.tree, node))
+            .flatten();
+        *slot = Some((node, index));
+        index
+    }
+
+    /// The selection's rectangle in the current layout.
     fn selected_rect(&mut self) -> Option<PxRect> {
         let selected = self.state.selected()?;
+        let mut slot = self.selected_index;
+        let index = self.locate(&mut slot, selected);
+        self.selected_index = slot;
         let map = &self.cache.as_ref()?.layout;
-        let index = match self.selected_index {
-            Some((node, index)) if node == selected => index,
-            _ => {
-                let index = map.index_of(selected);
-                self.selected_index = Some((selected, index));
-                index
-            }
-        };
         index.and_then(|i| map.rects().get(i)).map(|r| r.rect)
+    }
+
+    /// The rectangle to outline as hovered: the one under this widget's pointer, or the one
+    /// showing what another view (the folder tree) hovers.
+    fn shown_hover_index(&mut self) -> Option<usize> {
+        let hover = self.state.hovered()?;
+        if let Some(own) = self.hover_index {
+            if self.hover_for(own) == Some(hover) {
+                return Some(own);
+            }
+        }
+        let mut slot = self.linked_hover_index;
+        let index = self.locate(&mut slot, hover.node);
+        self.linked_hover_index = slot;
+        index
     }
 
     fn stroke(&self, ctx: &mut dyn DrawCtx, r: PxRect, color: Color, width: f64) {
@@ -373,15 +438,24 @@ impl Widget for TreemapView {
         size
     }
 
+    /// The hovered rectangle: moving to another one hides the tip and re-arms the hover
+    /// delay, as entering a new widget would.
+    fn tooltip_key(&self) -> Option<u64> {
+        self.hover_index.map(|i| i as u64)
+    }
+
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let scale = effective_scale();
         self.refresh(scale);
+        let Some(pixels) = self.shown_pixels() else {
+            return;
+        };
         let Some(cache) = &self.cache else {
             return;
         };
         let (w, h) = (cache.key.width, cache.key.height);
         ctx.draw_image_rgba_arc(
-            &cache.pixels,
+            &pixels,
             w,
             h,
             0.0,
@@ -395,10 +469,11 @@ impl Widget for TreemapView {
         if let Some(selected) = self.selected_rect() {
             self.stroke(ctx, selected, SELECTED_COLOR, OUTLINE);
         }
+        let hover_index = self.shown_hover_index();
         let Some(cache) = &self.cache else {
             return;
         };
-        let Some(index) = self.hover_index else {
+        let Some(index) = hover_index else {
             return;
         };
         let map = &cache.layout;
@@ -457,6 +532,10 @@ impl Widget for TreemapView {
         let plain = !(modifiers.ctrl || modifiers.meta || modifiers.alt);
         match key {
             Key::Backspace if plain && self.state.zoom_out() => EventResult::Consumed,
+            Key::Escape if self.state.highlight_ext().is_some() => {
+                self.state.set_highlight_ext(None);
+                EventResult::Consumed
+            }
             Key::Escape if self.state.selected().is_some() => {
                 self.state.set_selected(None);
                 EventResult::Consumed

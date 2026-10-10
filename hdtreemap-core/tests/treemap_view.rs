@@ -273,3 +273,40 @@ fn an_empty_scan_shows_an_empty_map() {
     assert_eq!(h.state.zoom_root(), NodeId(0));
     h.resize(2.0, 2.0);
 }
+
+#[test]
+fn the_tooltip_is_multi_line_and_keyed_on_the_hovered_rectangle() {
+    use agg_gui::widget::find_widget_by_id;
+    let mut h = usb_map();
+    let key_and_tip = |h: &Harness| {
+        let w = find_widget_by_id(h.app.root(), TREEMAP_ID).expect("treemap");
+        (w.tooltip_key(), w.tooltip_text().map(str::to_string))
+    };
+    let (x, y) = h.point_in(TREEMAP_ID, 0.1, 0.1);
+    h.move_to(x, y);
+    let (k1, t1) = key_and_tip(&h);
+    let (x, y) = h.point_in(TREEMAP_ID, 0.9, 0.9);
+    h.move_to(x, y);
+    let (k2, t2) = key_and_tip(&h);
+    assert!(
+        k1.is_some() && k2.is_some(),
+        "a hovered rectangle has a key"
+    );
+    assert_ne!(k1, k2, "different rectangles, different keys");
+    assert_ne!(h.state.hovered(), None);
+    for tip in [t1, t2] {
+        let tip = tip.expect("tooltip");
+        assert!(
+            tip.lines().count() >= 3,
+            "name / size / path lines: {tip:?}"
+        );
+    }
+    // Moving a pixel within the same (large) rectangle keeps the key.
+    let (x, y) = h.point_in(TREEMAP_ID, 0.1, 0.1);
+    h.move_to(x, y);
+    h.move_to(x + 1.0, y + 1.0);
+    assert_eq!(key_and_tip(&h).0, k1);
+    // Off the map: no key.
+    h.move_to(1.0, 1.0);
+    assert_eq!(key_and_tip(&h).0, None);
+}
