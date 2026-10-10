@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use agg_gui::{
-    Button, FlexColumn, FlexRow, HAnchor, Insets, Label, ProgressBar, Rebuilder, Spacer, Spinner,
-    VAnchor, Widget,
+    Button, EllipsisMode, FlexColumn, FlexRow, HAnchor, Insets, Label, ProgressBar, Rebuilder,
+    Spacer, Spinner, VAnchor, Widget,
 };
 
 use crate::fonts::{fa, Fonts};
@@ -132,7 +132,7 @@ fn build_live(state: &AppState, target: &ScanTarget, fonts: &Fonts) -> Box<dyn W
             Label::new(current, Arc::clone(&fonts.ui))
                 .with_font_size(13.0)
                 .with_dim(true)
-                .with_ellipsis_if_clipped(true)
+                .with_ellipsis_mode(EllipsisMode::PathMiddle)
                 .with_h_anchor(HAnchor::STRETCH)
                 .with_name(CURRENT_PATH_ID),
         )),
