@@ -16,6 +16,7 @@ use hdtreemap_core::ui::main_view::MAIN_VIEW_ID;
 use hdtreemap_core::ui::scan_strip::{CANCEL_BUTTON_ID, SCAN_STRIP_ID};
 use hdtreemap_core::ui::start_screen::{
     volume_card_id, CHOOSE_FOLDER_ID, DEMO_BANNER_ID, DEMO_NOTE_ID, NO_VOLUMES_ID, START_SCREEN_ID,
+    SUBTITLE_ID,
 };
 
 #[test]
@@ -134,4 +135,18 @@ fn small_windows_lay_out_without_panicking() {
         h.app.layout(Size::new(w, ht));
     }
     h.frame();
+}
+
+#[test]
+fn the_subtitle_offers_folders_only_where_they_can_be_chosen() {
+    let demo = Harness::new(Rc::new(DemoPlatform::default()));
+    let text = demo.label_text(SUBTITLE_ID);
+    assert!(
+        !text.contains("folder"),
+        "the demo has no folders to pick: {text}"
+    );
+    assert!(text.contains("drive"), "{text}");
+    let (platform, _) = fake(vec![volume("Disk", "/", 10 * GB, 5 * GB)], None);
+    let native = Harness::new(Rc::new(platform));
+    assert!(native.label_text(SUBTITLE_ID).contains("folder"));
 }

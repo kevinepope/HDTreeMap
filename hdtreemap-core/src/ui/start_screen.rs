@@ -30,6 +30,8 @@ pub const DEMO_BANNER_ID: &str = "demo-banner";
 pub const DEMO_NOTE_ID: &str = "demo-note";
 /// Widget id of the label shown when no volume could be listed.
 pub const NO_VOLUMES_ID: &str = "no-volumes";
+/// Widget id of the line under the title.
+pub const SUBTITLE_ID: &str = "start-subtitle";
 
 /// Text of the browser-demo note that replaces "Choose Folder…".
 pub const DEMO_NOTE_TEXT: &str = "Browser demo: pick a simulated drive.";
@@ -73,7 +75,7 @@ pub fn build(
         .with_top_anchor(true)
         .with_gap(14.0)
         .with_inner_padding(Insets::all(28.0))
-        .add(build_header(fonts));
+        .add(build_header(demo, fonts));
     if demo {
         column = column.add(build_demo_banner(fonts));
     }
@@ -88,7 +90,16 @@ pub fn build(
     Box::new(column.with_name(START_SCREEN_ID))
 }
 
-fn build_header(fonts: &Fonts) -> Box<dyn Widget> {
+/// What the subtitle asks for: on the demo there are only simulated drives to pick.
+pub fn subtitle(demo: bool) -> &'static str {
+    if demo {
+        "Choose a simulated drive to see what is using its space."
+    } else {
+        "Choose a drive or folder to see what is using the space."
+    }
+}
+
+fn build_header(demo: bool, fonts: &Fonts) -> Box<dyn Widget> {
     let visuals = current_visuals();
     let titles = FlexColumn::new()
         .with_gap(2.0)
@@ -100,12 +111,10 @@ fn build_header(fonts: &Fonts) -> Box<dyn Widget> {
                 .with_strong(true),
         ))
         .add(Box::new(
-            Label::new(
-                "Choose a drive or folder to see what is using the space.",
-                Arc::clone(&fonts.ui),
-            )
-            .with_font_size(14.0)
-            .with_dim(true),
+            Label::new(subtitle(demo), Arc::clone(&fonts.ui))
+                .with_font_size(14.0)
+                .with_dim(true)
+                .with_name(SUBTITLE_ID),
         ));
     Box::new(
         FlexRow::new()
