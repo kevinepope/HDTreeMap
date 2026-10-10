@@ -15,9 +15,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use hdtreemap_core::platform::mountinfo::MountEntry;
 use hdtreemap_core::platform::{
     dedupe_volumes, is_listable_volume, volume_display_name, ActionOutcome, ActionResult,
-    PlatformError, PlatformServices, VolumeInfo,
+    PlatformError, PlatformServices, VolumeInfo, VolumeKey,
 };
 use hdtreemap_core::scan::{FsScanner, ScanSource};
 use hdtreemap_core::state::ScanTarget;
@@ -29,6 +30,7 @@ pub struct NativePlatform;
 
 impl PlatformServices for NativePlatform {
     fn list_volumes(&self) -> Vec<VolumeInfo> {
+        let mounts = mount_entries();
         let disks = Disks::new_with_refreshed_list();
         let listed = disks
             .list()
@@ -43,6 +45,14 @@ impl PlatformServices for NativePlatform {
             .map(|disk| {
                 let device = disk.name().to_string_lossy().into_owned();
                 let mount_path = disk.mount_point().to_path_buf();
+                let key = VolumeKey {
+                    device: device.clone(),
+                    fs_root: mounts
+                        .iter()
+                        .rev()
+                        .find(|m| m.mount_point == mount_path)
+                        .map(|m| m.root.clone()),
+                };
                 let volume = VolumeInfo {
                     id: mount_path.to_string_lossy().into_owned(),
                     name: volume_display_name(&device, &mount_path),
@@ -51,7 +61,7 @@ impl PlatformServices for NativePlatform {
                     free_bytes: disk.available_space(),
                     description: None,
                 };
-                (device, volume)
+                (key, volume)
             })
             .collect();
         dedupe_volumes(listed)
@@ -96,6 +106,19 @@ impl PlatformServices for NativePlatform {
             Some(agg_gui::ui_thread::current_queue()),
         ))
     }
+}
+
+/// Linux's mount table (which folder of its filesystem each mount shows), so bind mounts
+/// are dropped from the volume list but btrfs subvolumes kept. Empty elsewhere.
+fn mount_entries() -> Vec<MountEntry> {
+    #[cfg(target_os = "linux")]
+    {
+        use hdtreemap_core::platform::mountinfo::{parse_mountinfo, MOUNTINFO_PATH};
+        if let Ok(text) = std::fs::read_to_string(MOUNTINFO_PATH) {
+            return parse_mountinfo(&text);
+        }
+    }
+    Vec::new()
 }
 
 fn reveal_error(path: &Path, err: impl std::fmt::Display) -> PlatformError {

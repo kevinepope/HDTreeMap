@@ -8,6 +8,9 @@
 //! - Devices and hard links are Unix-only (`st_dev`, `st_ino`, `st_nlink`). On Windows,
 //!   junctions and mounted volumes are reparse points that std reports as symlinks, which the
 //!   walk never follows, so it stays on one volume without a device check.
+//! - Linux: which mount points to skip comes from the mount table ([`mount_plan`]): btrfs
+//!   subvolumes have their own `st_dev` yet are the same disk, and bind mounts keep theirs
+//!   yet repeat folders already counted.
 //! - macOS: scanning `/` would visit the data volume twice, once through the firmlinks
 //!   (`/Users`, `/Applications`, ...) and once at `/System/Volumes/Data`, so that path is
 //!   skipped and its device counts as the root's.
@@ -118,6 +121,25 @@ pub(super) fn hard_link_key(meta: &Metadata) -> Option<(u64, u64)> {
 #[cfg(not(unix))]
 pub(super) fn hard_link_key(_meta: &Metadata) -> Option<(u64, u64)> {
     None
+}
+
+/// On Linux, the mount points below `root` to list but not enter, decided from
+/// `/proc/self/mountinfo` (`platform::mountinfo::mounts_to_skip`): other filesystems and
+/// bind mounts are skipped, btrfs subvolumes of the root's own filesystem entered. When
+/// this answers, the scan relies on it instead of comparing `st_dev` (which differs for
+/// every btrfs subvolume). `None` off Linux or without a readable mount table.
+pub(super) fn mount_plan(root: &Path) -> Option<Vec<PathBuf>> {
+    #[cfg(target_os = "linux")]
+    {
+        use crate::platform::mountinfo::{mounts_to_skip, parse_mountinfo, MOUNTINFO_PATH};
+        let text = std::fs::read_to_string(MOUNTINFO_PATH).ok()?;
+        mounts_to_skip(&parse_mountinfo(&text), root)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        None
+    }
 }
 
 /// The firmlink-duplicate data volume on macOS.

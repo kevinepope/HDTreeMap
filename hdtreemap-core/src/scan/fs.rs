@@ -275,17 +275,24 @@ fn root_file_name(root: &Path) -> Option<String> {
 /// The configured jwalk walk over `root`: hidden files included, symlinks not followed, its
 /// own rayon pool, and the per-entry filter below.
 fn build_walk(root: &Path, progress: &Arc<ScanProgress>) -> Walk {
-    let mut devices: Vec<u64> = fs::metadata(root)
-        .ok()
-        .and_then(|m| fs_meta::device(&m))
-        .into_iter()
-        .collect();
-    if !devices.is_empty() {
-        devices.extend(fs_meta::sibling_devices(root));
-    }
+    let (devices, skip) = match fs_meta::mount_plan(root) {
+        // Linux: the mount table names every mount point to skip; no device check.
+        Some(skip) => (Vec::new(), skip),
+        None => {
+            let mut devices: Vec<u64> = fs::metadata(root)
+                .ok()
+                .and_then(|m| fs_meta::device(&m))
+                .into_iter()
+                .collect();
+            if !devices.is_empty() {
+                devices.extend(fs_meta::sibling_devices(root));
+            }
+            (devices, fs_meta::duplicate_mounts(root))
+        }
+    };
     let filter = Arc::new(Filter {
         devices,
-        skip: fs_meta::duplicate_mounts(root),
+        skip,
         seen_links: Mutex::new(HashSet::new()),
         progress: Arc::clone(progress),
     });

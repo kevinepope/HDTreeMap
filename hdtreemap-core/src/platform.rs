@@ -6,7 +6,8 @@
 //!
 //! - `hdtreemap-native` implements it with the real OS (sysinfo, rfd, opener, trash). The
 //!   pure volume-list cleanup it applies ([`is_listable_volume`], [`dedupe_volumes`],
-//!   [`volume_display_name`]) lives here so it is unit-tested on every OS.
+//!   [`volume_display_name`]) and the Linux mount reasoning ([`mountinfo`]) live here so
+//!   they are unit-tested on every OS.
 //! - [`DemoPlatform`] (all targets) is the browser demo's simulated machine: a fixed set of
 //!   descriptive drives, and actions that only report they are simulated.
 //!
@@ -15,6 +16,7 @@
 //! simulated drive's generator on the demo.
 
 mod demo;
+pub mod mountinfo;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -171,13 +173,30 @@ pub fn is_listable_volume(fs_type: &str, mount_path: &Path, total_bytes: u64) ->
     })
 }
 
+/// What identifies the storage behind a listed volume, for [`dedupe_volumes`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VolumeKey {
+    /// The device name (`/dev/sda1`); empty when the OS gives none (unlabelled Windows
+    /// drives), and then the volume is never merged with another.
+    pub device: String,
+    /// The folder of the filesystem the mount shows, from Linux's mountinfo (`/` for the
+    /// whole filesystem, `/@home` for a btrfs subvolume); `None` elsewhere.
+    pub fs_root: Option<String>,
+}
+
 /// Drop repeated listings of one volume and sort for display.
 ///
 /// The same filesystem can be mounted more than once (Linux bind mounts list one device at
-/// several paths). Volumes with the same non-empty `device` name and the same total and free
-/// space are one volume; the shortest mount path wins. Unnamed volumes are never merged
-/// (Windows reports an empty name for unlabelled drives). The result is sorted by mount path.
-pub fn dedupe_volumes(mut volumes: Vec<(String, VolumeInfo)>) -> Vec<VolumeInfo> {
+/// several paths). Two listings are one volume when they share a mount path, or the same
+/// non-empty device and:
+///
+/// - with mount roots known (Linux): the same root, so a bind mount of a filesystem is
+///   dropped but btrfs subvolumes of one device (`/` and `/home`) are both listed;
+/// - otherwise: the same total and free space, unless one mount path is inside the other
+///   (distinct mount points such as `/` and `/home` are kept).
+///
+/// The shortest mount path wins. The result is sorted by mount path.
+pub fn dedupe_volumes(mut volumes: Vec<(VolumeKey, VolumeInfo)>) -> Vec<VolumeInfo> {
     volumes.sort_by(|(_, a), (_, b)| {
         let a_len = a.mount_path.as_os_str().len();
         let b_len = b.mount_path.as_os_str().len();
@@ -185,22 +204,36 @@ pub fn dedupe_volumes(mut volumes: Vec<(String, VolumeInfo)>) -> Vec<VolumeInfo>
             .cmp(&b_len)
             .then_with(|| a.mount_path.cmp(&b.mount_path))
     });
-    let mut kept: Vec<(String, VolumeInfo)> = Vec::new();
-    for (device, volume) in volumes {
-        let duplicate = kept.iter().any(|(kept_device, kept_volume)| {
-            kept_volume.mount_path == volume.mount_path
-                || (!device.is_empty()
-                    && *kept_device == device
-                    && kept_volume.total_bytes == volume.total_bytes
-                    && kept_volume.free_bytes == volume.free_bytes)
-        });
+    let mut kept: Vec<(VolumeKey, VolumeInfo)> = Vec::new();
+    for (key, volume) in volumes {
+        let duplicate = kept
+            .iter()
+            .any(|(kept_key, kept_volume)| same_volume(kept_key, kept_volume, &key, &volume));
         if !duplicate {
-            kept.push((device, volume));
+            kept.push((key, volume));
         }
     }
     let mut result: Vec<VolumeInfo> = kept.into_iter().map(|(_, v)| v).collect();
     result.sort_by(|a, b| a.mount_path.cmp(&b.mount_path));
     result
+}
+
+/// The rule [`dedupe_volumes`] documents.
+fn same_volume(a_key: &VolumeKey, a: &VolumeInfo, b_key: &VolumeKey, b: &VolumeInfo) -> bool {
+    if a.mount_path == b.mount_path {
+        return true;
+    }
+    if a_key.device.is_empty() || a_key.device != b_key.device {
+        return false;
+    }
+    match (&a_key.fs_root, &b_key.fs_root) {
+        (Some(a_root), Some(b_root)) => a_root == b_root,
+        _ => {
+            let nested =
+                a.mount_path.starts_with(&b.mount_path) || b.mount_path.starts_with(&a.mount_path);
+            !nested && a.total_bytes == b.total_bytes && a.free_bytes == b.free_bytes
+        }
+    }
 }
 
 /// A readable name for a volume: its label when it has one, otherwise (unlabelled drives,
@@ -290,22 +323,72 @@ mod tests {
         assert!(!is_listable_volume("ext4", Path::new("/mnt/empty"), 0));
     }
 
+    fn key(device: &str, fs_root: Option<&str>) -> VolumeKey {
+        VolumeKey {
+            device: device.to_string(),
+            fs_root: fs_root.map(str::to_string),
+        }
+    }
+
+    fn mounts(listed: &[VolumeInfo]) -> Vec<PathBuf> {
+        listed.iter().map(|v| v.mount_path.clone()).collect()
+    }
+
     #[test]
-    fn bind_mounts_of_one_device_collapse_to_the_shortest_path() {
+    fn bind_mounts_of_one_root_collapse_to_the_shortest_path() {
         let listed = dedupe_volumes(vec![
-            ("/dev/sda1".into(), volume("/var/lib/docker", 500, 100)),
-            ("/dev/sda1".into(), volume("/", 500, 100)),
-            ("/dev/sdb1".into(), volume("/data", 900, 300)),
+            (
+                key("/dev/sda1", Some("/")),
+                volume("/var/lib/docker", 500, 100),
+            ),
+            (key("/dev/sda1", Some("/")), volume("/", 500, 100)),
+            (key("/dev/sdb1", Some("/")), volume("/data", 900, 300)),
         ]);
-        let mounts: Vec<_> = listed.iter().map(|v| v.mount_path.clone()).collect();
-        assert_eq!(mounts, vec![PathBuf::from("/"), PathBuf::from("/data")]);
+        assert_eq!(
+            mounts(&listed),
+            vec![PathBuf::from("/"), PathBuf::from("/data")]
+        );
+    }
+
+    #[test]
+    fn btrfs_subvolumes_of_one_device_are_both_listed() {
+        // Same device, same space (one filesystem), different subvolumes: / and /home.
+        let listed = dedupe_volumes(vec![
+            (key("/dev/nvme0n1p3", Some("/root")), volume("/", 900, 300)),
+            (
+                key("/dev/nvme0n1p3", Some("/home")),
+                volume("/home", 900, 300),
+            ),
+        ]);
+        assert_eq!(
+            mounts(&listed),
+            vec![PathBuf::from("/"), PathBuf::from("/home")]
+        );
+    }
+
+    #[test]
+    fn without_mount_roots_nested_mounts_are_kept_and_others_merged() {
+        let listed = dedupe_volumes(vec![
+            (key("/dev/sda1", None), volume("/", 500, 100)),
+            (key("/dev/sda1", None), volume("/home", 500, 100)),
+            (key("/dev/sdb1", None), volume("/mnt/a", 900, 300)),
+            (key("/dev/sdb1", None), volume("/media/b", 900, 300)),
+        ]);
+        assert_eq!(
+            mounts(&listed),
+            vec![
+                PathBuf::from("/"),
+                PathBuf::from("/home"),
+                PathBuf::from("/mnt/a")
+            ]
+        );
     }
 
     #[test]
     fn unnamed_volumes_are_never_merged() {
         let listed = dedupe_volumes(vec![
-            (String::new(), volume("D:\\", 500, 100)),
-            (String::new(), volume("C:\\", 500, 100)),
+            (key("", None), volume("D:\\", 500, 100)),
+            (key("", None), volume("C:\\", 500, 100)),
         ]);
         let mounts: Vec<_> = listed.iter().map(|v| v.mount_path.clone()).collect();
         assert_eq!(mounts, vec![PathBuf::from("C:\\"), PathBuf::from("D:\\")]);
@@ -316,8 +399,8 @@ mod tests {
     #[test]
     fn a_repeated_mount_path_is_listed_once() {
         let listed = dedupe_volumes(vec![
-            ("x".into(), volume("/mnt/a", 10, 1)),
-            ("y".into(), volume("/mnt/a", 10, 1)),
+            (key("x", None), volume("/mnt/a", 10, 1)),
+            (key("y", None), volume("/mnt/a", 10, 1)),
         ]);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].mount_path, PathBuf::from("/mnt/a"));
