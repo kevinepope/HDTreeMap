@@ -10,7 +10,8 @@
 //! mouse never re-rasterises.
 //!
 //! Coordinates: agg-gui hands the widget Y-up logical points; the layout and raster are in
-//! Y-down physical pixels. `to_map` / `rect_to_local` convert between the two.
+//! Y-down physical pixels, capped in total (`geometry.rs`). `to_map` / `rect_to_local`
+//! convert between the two.
 //!
 //! The colours are the shared [`AppState::palette`], so the extension legend's swatches
 //! match. The outlines follow `AppState`, not just this widget's pointer: an item hovered or
@@ -25,6 +26,7 @@
 //! the mouse back button zooms out; Escape clears the extension highlight, else the
 //! selection.
 
+mod geometry;
 mod highlight;
 
 use std::rc::Rc;
@@ -130,8 +132,7 @@ impl TreemapView {
 
     /// Bring the layout and raster up to date for the current size and state.
     fn refresh(&mut self, scale: f64) {
-        let width = physical(self.bounds.width, scale);
-        let height = physical(self.bounds.height, scale);
+        let (width, height) = geometry::raster_size(self.bounds.width, self.bounds.height, scale);
         let key = LayoutKey {
             width,
             height,
@@ -225,21 +226,20 @@ impl TreemapView {
     /// A local (Y-up, logical) point in map pixels (Y-down, physical).
     fn to_map(&self, pos: Point) -> Option<(f64, f64)> {
         let cache = self.cache.as_ref()?;
-        let scale = effective_scale();
-        Some((pos.x * scale, f64::from(cache.key.height) - pos.y * scale))
+        let raster = (cache.key.width, cache.key.height);
+        geometry::to_raster(pos, raster, self.local_bounds())
     }
 
     /// A map rectangle as a local (Y-up, logical) rectangle.
     fn rect_to_local(&self, r: PxRect) -> Option<Rect> {
         let cache = self.cache.as_ref()?;
-        let scale = effective_scale();
-        let top = f64::from(cache.key.height) - r.bottom();
-        Some(Rect::new(
-            r.x / scale,
-            top / scale,
-            r.w / scale,
-            r.h / scale,
-        ))
+        let raster = (cache.key.width, cache.key.height);
+        geometry::to_local(r, raster, self.local_bounds())
+    }
+
+    /// The widget's own rectangle in its local coordinates.
+    fn local_bounds(&self) -> Rect {
+        Rect::new(0.0, 0.0, self.bounds.width, self.bounds.height)
     }
 
     /// Update the hover from a pointer at `pos` (local, Y-up).
@@ -373,16 +373,6 @@ impl TreemapView {
     }
 }
 
-/// Logical length → whole physical pixels.
-fn physical(len: f64, scale: f64) -> u32 {
-    let px = (len * scale).round();
-    if px.is_finite() && px > 0.0 {
-        px.min(f64::from(u16::MAX)) as u32
-    } else {
-        0
-    }
-}
-
 fn ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
@@ -454,14 +444,16 @@ impl Widget for TreemapView {
             return;
         };
         let (w, h) = (cache.key.width, cache.key.height);
+        // Stretched over the widget: the raster may be smaller than its physical size
+        // (`geometry::MAX_RASTER_PIXELS`).
         ctx.draw_image_rgba_arc(
             &pixels,
             w,
             h,
             0.0,
             0.0,
-            f64::from(w) / scale,
-            f64::from(h) / scale,
+            self.bounds.width,
+            self.bounds.height,
         );
     }
 
