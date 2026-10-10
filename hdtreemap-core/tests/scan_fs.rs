@@ -281,6 +281,33 @@ mod unix {
         assert_eq!(result.tree.file_count(), 1, "only ok.txt was readable");
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_utf8_names_are_flagged_lossy() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let odd = dir.path().join(OsStr::from_bytes(b"caf\xe9"));
+        fs::create_dir_all(&odd).expect("a non-UTF-8 folder name");
+        write(&odd.join("inside.txt"), 10);
+        write(&dir.path().join("plain.txt"), 10);
+        let (result, _) = scan(dir.path());
+        let tree = &result.tree;
+        let folder = tree
+            .children(tree.root())
+            .find(|&c| tree.name(c).starts_with("caf"))
+            .expect("listed under a lossy name");
+        assert!(tree
+            .node(folder)
+            .expect("node")
+            .flags()
+            .contains(NodeFlags::LOSSY_NAME));
+        let inside = tree.children(folder).next().expect("inside.txt");
+        assert_eq!(tree.exact_path(inside), None);
+        let plain = find(tree, "plain.txt").expect("plain");
+        assert!(tree.exact_path(plain).is_some());
+    }
+
     fn is_root_user() -> bool {
         // `id -u` without a libc dependency: a root-owned temp file reveals the euid.
         let probe = tempfile::NamedTempFile::new().expect("probe");

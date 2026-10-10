@@ -191,6 +191,21 @@ impl Tree {
         path
     }
 
+    /// The node's real path, for handing to the OS (reveal, open, trash, rescan): `None`
+    /// when the node or a folder above it has a [`NodeFlags::LOSSY_NAME`], because the
+    /// stored name is not the name on disk and acting on it could hit the wrong file.
+    pub fn exact_path(&self, id: NodeId) -> Option<PathBuf> {
+        (self.node(id).is_some() && !self.has_lossy_path(id)).then(|| self.path(id))
+    }
+
+    /// Whether the node or any folder above it has a lossily converted name.
+    pub fn has_lossy_path(&self, id: NodeId) -> bool {
+        std::iter::once(id).chain(self.ancestors(id)).any(|n| {
+            self.node(n)
+                .is_some_and(|n| n.flags.contains(NodeFlags::LOSSY_NAME))
+        })
+    }
+
     /// The path below the root with `/` separators (`""` for the root), for display.
     pub fn relative_path(&self, id: NodeId) -> String {
         let mut parts: Vec<&str> = Vec::new();

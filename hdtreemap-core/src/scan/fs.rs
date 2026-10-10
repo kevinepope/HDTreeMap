@@ -167,6 +167,13 @@ pub fn scan_blocking(
         _ => root.to_string_lossy(),
     };
     let mut builder = TreeBuilder::new(&root_name);
+    let root_lossy = match (&file_root, root.parent()) {
+        (Some(_), Some(parent)) => parent.to_str().is_none(),
+        _ => root.to_str().is_none(),
+    };
+    if root_lossy {
+        builder.mark(builder.root(), NodeFlags::LOSSY_NAME);
+    }
     let walk = build_walk(root, progress);
     progress.set_current_path(&root.to_string_lossy());
 
@@ -194,7 +201,11 @@ pub fn scan_blocking(
                         // Scanning a single file: it is the only child of its folder.
                         Some(name) if info.error.is_none() => {
                             progress.add_file(info.sizes.allocated);
-                            builder.add_file(root_id, name, info.sizes, info.flags)
+                            let mut flags = info.flags;
+                            if root.file_name().is_some_and(|n| n.to_str().is_none()) {
+                                flags.insert(NodeFlags::LOSSY_NAME);
+                            }
+                            builder.add_file(root_id, name, info.sizes, flags)
                         }
                         _ => {
                             builder.mark(root_id, info.flags);
@@ -205,15 +216,19 @@ pub fn scan_blocking(
                     stack.truncate(entry.depth);
                     let parent = stack.last().copied().unwrap_or_else(|| builder.root());
                     let name = entry.file_name.to_string_lossy();
+                    let mut flags = info.flags;
+                    if entry.file_name.to_str().is_none() {
+                        flags.insert(NodeFlags::LOSSY_NAME);
+                    }
                     if entry.file_type.is_dir() {
                         let id = builder.add_dir(parent, &name);
-                        builder.mark(id, info.flags);
+                        builder.mark(id, flags);
                         progress.add_dir();
                         stack.push(id);
                         id
                     } else {
                         progress.add_file(info.sizes.allocated);
-                        builder.add_file(parent, &name, info.sizes, info.flags)
+                        builder.add_file(parent, &name, info.sizes, flags)
                     }
                 };
                 let failure = info

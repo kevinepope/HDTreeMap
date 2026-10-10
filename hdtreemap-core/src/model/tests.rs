@@ -274,3 +274,27 @@ fn many_extensions_saturate_to_none() {
     assert_eq!(tree.ext_count(), u16::MAX as usize + 1);
     assert_eq!(tree.file_count(), u16::MAX as u64 + 10);
 }
+
+#[test]
+fn a_lossy_name_makes_its_path_and_everything_below_inexact() {
+    let mut b = TreeBuilder::new("/r");
+    let root = b.root();
+    let fine = b.add_dir(root, "fine");
+    let ok = b.add_file(fine, "ok.txt", Sizes::new(1, 1), NodeFlags::empty());
+    let bad = b.add_dir(root, "bad\u{fffd}");
+    b.mark(bad, NodeFlags::LOSSY_NAME);
+    let below = b.add_file(bad, "inside.txt", Sizes::new(1, 1), NodeFlags::empty());
+    let lossy_file = b.add_file(fine, "x\u{fffd}", Sizes::new(1, 1), NodeFlags::LOSSY_NAME);
+    let tree = b.finish(SizeMode::Allocated);
+    assert_eq!(tree.exact_path(ok), Some(PathBuf::from("/r/fine/ok.txt")));
+    assert_eq!(tree.exact_path(root), Some(PathBuf::from("/r")));
+    assert_eq!(tree.exact_path(bad), None);
+    assert_eq!(
+        tree.exact_path(below),
+        None,
+        "a lossy folder taints its contents"
+    );
+    assert_eq!(tree.exact_path(lossy_file), None);
+    assert!(tree.has_lossy_path(below));
+    assert!(!tree.has_lossy_path(fine));
+}

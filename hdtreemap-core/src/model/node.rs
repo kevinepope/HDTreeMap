@@ -88,6 +88,9 @@ impl NodeFlags {
     pub const SKIPPED: NodeFlags = NodeFlags(1 << 4);
     /// Removed from the tree (moved to the trash); unlinked, kept in the arena.
     pub const REMOVED: NodeFlags = NodeFlags(1 << 5);
+    /// The name on disk is not valid Unicode and was stored with replacement characters,
+    /// so the stored path does not name the real file (see `Tree::exact_path`).
+    pub const LOSSY_NAME: NodeFlags = NodeFlags(1 << 6);
 
     pub const fn empty() -> Self {
         NodeFlags(0)
