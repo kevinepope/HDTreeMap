@@ -287,22 +287,25 @@ mod tests {
     }
 
     #[test]
-    fn unnamed_volumes_and_repeated_mount_paths() {
+    fn unnamed_volumes_are_never_merged() {
         let listed = dedupe_volumes(vec![
             (String::new(), volume("D:\\", 500, 100)),
             (String::new(), volume("C:\\", 500, 100)),
+        ]);
+        let mounts: Vec<_> = listed.iter().map(|v| v.mount_path.clone()).collect();
+        assert_eq!(mounts, vec![PathBuf::from("C:\\"), PathBuf::from("D:\\")]);
+    }
+
+    // Unix and Windows paths are kept in separate tests: `Path` ordering between the two
+    // styles differs by host OS (on Windows `C:\` is a prefix component).
+    #[test]
+    fn a_repeated_mount_path_is_listed_once() {
+        let listed = dedupe_volumes(vec![
             ("x".into(), volume("/mnt/a", 10, 1)),
             ("y".into(), volume("/mnt/a", 10, 1)),
         ]);
-        let mounts: Vec<_> = listed.iter().map(|v| v.mount_path.clone()).collect();
-        assert_eq!(
-            mounts,
-            vec![
-                PathBuf::from("/mnt/a"),
-                PathBuf::from("C:\\"),
-                PathBuf::from("D:\\")
-            ]
-        );
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].mount_path, PathBuf::from("/mnt/a"));
     }
 
     #[test]
