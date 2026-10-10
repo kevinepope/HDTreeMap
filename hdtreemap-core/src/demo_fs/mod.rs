@@ -63,7 +63,7 @@ impl DemoProfile {
 
     /// The used space the demo platform advertises for this drive: what the tree adds up to.
     pub fn used_bytes(self) -> u64 {
-        DemoPlatform
+        DemoPlatform::default()
             .list_volumes()
             .iter()
             .find(|v| v.id == self.id())

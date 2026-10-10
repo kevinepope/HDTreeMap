@@ -7,6 +7,7 @@
 //! | Reveal | `open -R` | `explorer /select,` | FileManager1 `ShowItems` over `dbus-send`, else `xdg-open` on the parent |
 //! | Open | opener | opener | opener |
 //! | Trash | trash | trash | trash |
+//! | Scan | `FsScanner` (jwalk, worker thread) | same | same |
 //!
 //! The volume list is cleaned up by the pure, unit-tested helpers in
 //! `hdtreemap_core::platform` (pseudo filesystems, system mounts, duplicates).
@@ -18,6 +19,8 @@ use hdtreemap_core::platform::{
     dedupe_volumes, is_listable_volume, volume_display_name, ActionOutcome, ActionResult,
     PlatformError, PlatformServices, VolumeInfo,
 };
+use hdtreemap_core::scan::{FsScanner, ScanSource};
+use hdtreemap_core::state::ScanTarget;
 use sysinfo::Disks;
 
 /// The real machine.
@@ -83,6 +86,15 @@ impl PlatformServices for NativePlatform {
 
     fn is_demo(&self) -> bool {
         false
+    }
+
+    /// Walk the real folder on a worker thread, waking this (the UI) thread's frame loop as
+    /// progress comes in.
+    fn scan_source(&self, target: &ScanTarget) -> Box<dyn ScanSource> {
+        Box::new(FsScanner::start(
+            target.path.clone(),
+            Some(agg_gui::ui_thread::current_queue()),
+        ))
     }
 }
 

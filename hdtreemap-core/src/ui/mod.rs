@@ -3,11 +3,14 @@
 //! The root is a `Rebuilder` keyed on [`AppState::version`]: when the state switches screens
 //! the root rebuilds the matching screen on the next layout.
 //!
-//! - [`start_screen`] — app title, one card per volume, "Choose Folder…", the demo banner.
-//! - [`target_screen`] — the chosen path and a Back button (replaced by the scan screen in M1).
+//! - [`start_screen`] — app title, one clickable card per volume, "Choose Folder…", the
+//!   demo banner.
+//! - [`scan_screen`] — live progress of a running scan, and Cancel.
+//! - [`results_screen`] — totals, largest folders, top file types, Back and Rescan.
 
+pub mod results_screen;
+pub mod scan_screen;
 pub mod start_screen;
-pub mod target_screen;
 
 use std::rc::Rc;
 
@@ -28,7 +31,8 @@ pub fn build_root(
         move || version_state.version(),
         move || match state.screen() {
             Screen::Start => start_screen::build(&state, &platform, &fonts),
-            Screen::Target(target) => target_screen::build(&state, &target, &fonts),
+            Screen::Scanning(target) => scan_screen::build(&state, &target, &fonts),
+            Screen::Results(target) => results_screen::build(&state, &platform, &target, &fonts),
         },
     ))
 }

@@ -159,6 +159,7 @@ pub fn scan_blocking(
     let mut errors = ScanErrors::default();
     let mut builder = TreeBuilder::new(&root.to_string_lossy());
     let walk = build_walk(root, progress);
+    progress.set_current_path(&root.to_string_lossy());
 
     // stack[d] is the open directory at depth d.
     let mut stack: Vec<NodeId> = vec![builder.root()];

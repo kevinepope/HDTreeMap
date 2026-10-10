@@ -1,5 +1,8 @@
-//! Human-readable formatting of sizes and fractions for the UI (start-screen volume cards
-//! now; the status bar, folder tree and legend later). Pure functions, unit-tested here.
+//! Human-readable formatting for the UI: sizes, fractions, counts and durations (volume
+//! cards, the scan and results screens; the status bar, folder tree and legend later). Pure
+//! functions, unit-tested here.
+
+use std::time::Duration;
 
 /// Size units for [`format_bytes`], each 1024× the previous.
 const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
@@ -32,6 +35,50 @@ pub fn used_fraction(total_bytes: u64, free_bytes: u64) -> f64 {
     }
     let used = total_bytes.saturating_sub(free_bytes);
     (used as f64 / total_bytes as f64).clamp(0.0, 1.0)
+}
+
+/// A count with thousands separators: `1234567` → `"1,234,567"`.
+pub fn format_count(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Elapsed time as a clock: `"0:07"`, `"12:34"`, `"1:02:03"`.
+pub fn format_elapsed(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// A short duration for reports: `"850 ms"`, `"4.2 s"`, then [`format_elapsed`].
+pub fn format_duration(elapsed: Duration) -> String {
+    let ms = elapsed.as_millis();
+    if ms < 1000 {
+        format!("{ms} ms")
+    } else if ms < 60_000 {
+        format!("{:.1} s", elapsed.as_secs_f64())
+    } else {
+        format_elapsed(elapsed)
+    }
+}
+
+/// `part` as a percentage of `whole` with one decimal (`"12.5%"`); `"0.0%"` of nothing.
+pub fn format_percent(part: u64, whole: u64) -> String {
+    if whole == 0 {
+        return "0.0%".to_string();
+    }
+    format!("{:.1}%", part as f64 * 100.0 / whole as f64)
 }
 
 #[cfg(test)]
@@ -86,5 +133,31 @@ mod tests {
         assert_eq!(used_fraction(100, 25), 0.75);
         // Free larger than total (racy OS numbers) clamps to unused, never negative.
         assert_eq!(used_fraction(100, 200), 0.0);
+    }
+
+    #[test]
+    fn counts_get_thousands_separators() {
+        assert_eq!(format_count(0), "0");
+        assert_eq!(format_count(999), "999");
+        assert_eq!(format_count(1000), "1,000");
+        assert_eq!(format_count(1_234_567), "1,234,567");
+        assert_eq!(format_count(100_000), "100,000");
+    }
+
+    #[test]
+    fn durations_read_as_clocks_and_reports() {
+        assert_eq!(format_elapsed(Duration::from_secs(7)), "0:07");
+        assert_eq!(format_elapsed(Duration::from_secs(754)), "12:34");
+        assert_eq!(format_elapsed(Duration::from_secs(3723)), "1:02:03");
+        assert_eq!(format_duration(Duration::from_millis(850)), "850 ms");
+        assert_eq!(format_duration(Duration::from_millis(4210)), "4.2 s");
+        assert_eq!(format_duration(Duration::from_secs(61)), "1:01");
+    }
+
+    #[test]
+    fn percentages_have_one_decimal() {
+        assert_eq!(format_percent(1, 8), "12.5%");
+        assert_eq!(format_percent(5, 0), "0.0%");
+        assert_eq!(format_percent(3, 3), "100.0%");
     }
 }

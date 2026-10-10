@@ -26,6 +26,12 @@ pub mod fa {
     pub const INFO_CIRCLE: char = '\u{f05a}';
     /// fa-th-large — the app mark next to the title.
     pub const TH_LARGE: char = '\u{f009}';
+    /// fa-times — cancel a scan.
+    pub const TIMES: char = '\u{f00d}';
+    /// fa-refresh — rescan.
+    pub const REFRESH: char = '\u{f021}';
+    /// fa-exclamation-triangle — unreadable items.
+    pub const WARNING: char = '\u{f071}';
 }
 
 /// The faces the widgets draw with.
@@ -65,6 +71,9 @@ mod tests {
             fa::ARROW_LEFT,
             fa::INFO_CIRCLE,
             fa::TH_LARGE,
+            fa::TIMES,
+            fa::REFRESH,
+            fa::WARNING,
         ] {
             assert!(
                 fonts.icons.has_glyph(icon),

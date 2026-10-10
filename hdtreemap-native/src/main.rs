@@ -2,25 +2,84 @@
 //!
 //! Thinnest possible desktop shim: the winit window, event loop, wgpu surface, input
 //! forwarding and frame painting all belong to `agg-gui-shell`. This crate names the window,
-//! reads the optional folder argument from the command line, and hands the shared app from
-//! `hdtreemap-core` the real OS services ([`platform::NativePlatform`]).
+//! reads the command line ([`cli`]), and hands the shared app from `hdtreemap-core` the real
+//! OS services ([`platform::NativePlatform`]) or, with `--demo`, the web demo's simulated
+//! drives. `--dump-top N` scans without a window ([`dump`]).
 //!
-//! Usage: `hdtreemap [PATH]`. With a path the app opens straight on that scan target.
-//! `HDTREEMAP_SCREENSHOT=out.png` captures one frame after start-up and exits (README images,
-//! checking the UI without a person at the keyboard); `HDTREEMAP_SCREENSHOT_FRAMES=N` sets how
-//! many frames to let settle first (default 10).
+//! Usage: see [`cli::USAGE`]. `HDTREEMAP_SCREENSHOT=out.png` captures one frame after
+//! start-up and exits (README images, checking the UI without a person at the keyboard);
+//! `HDTREEMAP_SCREENSHOT_FRAMES=N` sets how many frames to let settle first (default 10).
 
+mod cli;
+mod dump;
 mod platform;
 
-use std::path::PathBuf;
+use std::process::ExitCode;
 use std::rc::Rc;
 
 use agg_gui_shell::{NoHost, RedrawPolicy, ShellConfig, ShellError};
+use hdtreemap_core::platform::{DemoPlatform, PlatformServices};
+use hdtreemap_core::state::ScanTarget;
 use hdtreemap_core::{build_app, install_theme_and_fonts, AppState, APP_TITLE};
 
-fn main() -> Result<(), ShellError> {
-    let initial_path = std::env::args_os().nth(1).map(PathBuf::from);
+use cli::Command;
 
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let command = match cli::parse(&args) {
+        Ok(command) => command,
+        Err(message) => {
+            eprintln!("hdtreemap: {message}\n\n{}", cli::USAGE);
+            return ExitCode::from(2);
+        }
+    };
+    let (platform, target): (Rc<dyn PlatformServices>, Option<ScanTarget>) = match command {
+        Command::Help => {
+            println!("{}", cli::USAGE);
+            return ExitCode::SUCCESS;
+        }
+        Command::DumpTop { top, source } => {
+            return match dump::run(top, &source) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(message) => {
+                    eprintln!("hdtreemap: {message}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Command::App { path } => (
+            Rc::new(platform::NativePlatform),
+            path.map(ScanTarget::folder),
+        ),
+        Command::Demo { id } => {
+            let demo = DemoPlatform::default();
+            let target = match id {
+                Some(id) => match demo.list_volumes().into_iter().find(|v| v.id == id) {
+                    Some(volume) => Some(ScanTarget::volume(&volume)),
+                    None => {
+                        eprintln!("hdtreemap: unknown demo drive {id:?}\n\n{}", cli::USAGE);
+                        return ExitCode::from(2);
+                    }
+                },
+                None => None,
+            };
+            (Rc::new(demo), target)
+        }
+    };
+    match run_app(platform, target) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("hdtreemap: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Open the window over `platform`, scanning `target` at once when given.
+fn run_app(
+    platform: Rc<dyn PlatformServices>,
+    target: Option<ScanTarget>,
+) -> Result<(), ShellError> {
     let mut config = ShellConfig::new(APP_TITLE)
         .with_logical_size(1200.0, 800.0)
         .with_min_logical_size(640.0, 480.0)
@@ -37,8 +96,12 @@ fn main() -> Result<(), ShellError> {
 
     agg_gui_shell::run(config, move |init| {
         let fonts = install_theme_and_fonts(init.device_scale()).map_err(ShellError::app)?;
-        let state = AppState::with_initial_path(initial_path);
-        let app = build_app(state, Rc::new(platform::NativePlatform), fonts);
+        let state = AppState::new();
+        if let Some(target) = target {
+            let source = platform.scan_source(&target);
+            state.start_scan(target, source);
+        }
+        let app = build_app(state, platform, fonts);
         Ok((app, NoHost))
     })
 }

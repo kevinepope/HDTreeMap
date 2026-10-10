@@ -1,17 +1,17 @@
 //! The start screen: app title, one card per mounted volume (name, optional description,
-//! mount path, used/free bar, used/total text and a Scan button), and below the list either
-//! "Choose Folder…" (native) or, on the browser demo, a note that the drives are simulated
-//! plus a banner at the top.
+//! mount path, used/free bar, used/total text; the whole card is clickable), and below the
+//! list either "Choose Folder…" (native) or, on the browser demo, a note that the drives
+//! are simulated plus a banner at the top.
 //!
-//! Picking a volume or a folder records a `ScanTarget` in `AppState`; the root `Rebuilder`
-//! (`ui/mod.rs`) then shows the target screen.
+//! Picking a volume or a folder starts a scan of it (the platform's `scan_source`) through
+//! `AppState::start_scan`; the root `Rebuilder` (`ui/mod.rs`) then shows the scan screen.
 
 use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    current_visuals, Button, Color, Container, FlexColumn, FlexRow, HAnchor, Insets, Label,
-    ProgressBar, ScrollView, Size, Spacer, VAnchor, Widget,
+    current_visuals, Button, Clickable, Color, Container, FlexColumn, FlexRow, HAnchor, Insets,
+    Label, ProgressBar, ScrollView, Size, Spacer, VAnchor, Widget,
 };
 
 use crate::fonts::{fa, Fonts};
@@ -37,15 +37,13 @@ pub const DEMO_NOTE_TEXT: &str = "Browser demo: pick a simulated drive.";
 pub const DEMO_BANNER_TEXT: &str =
     "Browser demo. These drives are simulated; nothing on your computer is read.";
 
+/// Corner radius of the volume cards.
+const CARD_RADIUS: f64 = 8.0;
+
 /// Used fraction above which a volume's bar turns red.
 const NEARLY_FULL: f64 = 0.9;
 
-/// Widget id of the Scan button on the `index`-th volume card.
-pub fn volume_scan_id(index: usize) -> String {
-    format!("volume-scan-{index}")
-}
-
-/// Widget id of the `index`-th volume card.
+/// Widget id of the `index`-th volume card (clicking it scans the volume).
 pub fn volume_card_id(index: usize) -> String {
     format!("volume-card-{index}")
 }
@@ -83,7 +81,7 @@ pub fn build(
                 .with_font_size(16.0)
                 .with_strong(true),
         ))
-        .add_flex(build_volume_list(state, &volumes, fonts), 1.0)
+        .add_flex(build_volume_list(state, platform, &volumes, fonts), 1.0)
         .add(build_footer(state, platform, demo, fonts));
     Box::new(column.with_name(START_SCREEN_ID))
 }
@@ -142,7 +140,18 @@ fn build_demo_banner(fonts: &Fonts) -> Box<dyn Widget> {
     )
 }
 
-fn build_volume_list(state: &AppState, volumes: &[VolumeInfo], fonts: &Fonts) -> Box<dyn Widget> {
+/// Start scanning `target` with the platform's scan source.
+pub fn start_scan(state: &AppState, platform: &Rc<dyn PlatformServices>, target: ScanTarget) {
+    let source = platform.scan_source(&target);
+    state.start_scan(target, source);
+}
+
+fn build_volume_list(
+    state: &AppState,
+    platform: &Rc<dyn PlatformServices>,
+    volumes: &[VolumeInfo],
+    fonts: &Fonts,
+) -> Box<dyn Widget> {
     let mut list = FlexColumn::new().with_gap(10.0);
     if volumes.is_empty() {
         list = list.add(Box::new(
@@ -155,13 +164,14 @@ fn build_volume_list(state: &AppState, volumes: &[VolumeInfo], fonts: &Fonts) ->
         ));
     }
     for (index, volume) in volumes.iter().enumerate() {
-        list = list.add(build_volume_card(state, index, volume, fonts));
+        list = list.add(build_volume_card(state, platform, index, volume, fonts));
     }
     Box::new(ScrollView::new(Box::new(list)).with_h_anchor(HAnchor::STRETCH))
 }
 
 fn build_volume_card(
     state: &AppState,
+    platform: &Rc<dyn PlatformServices>,
     index: usize,
     volume: &VolumeInfo,
     fonts: &Fonts,
@@ -200,31 +210,39 @@ fn build_volume_card(
             Label::new(usage_text(volume), Arc::clone(&fonts.ui)).with_font_size(13.0),
         ));
 
+    let row = FlexRow::new()
+        .with_gap(16.0)
+        .with_h_anchor(HAnchor::STRETCH)
+        .add(Box::new(
+            Label::new(fa::HDD.to_string(), Arc::clone(&fonts.ui))
+                .with_font_size(30.0)
+                .with_dim(true)
+                .with_v_anchor(VAnchor::CENTER),
+        ))
+        .add_flex(Box::new(details), 1.0)
+        // A visual cue that the card scans; the whole card is the click target.
+        .add(Box::new(
+            Label::new(format!("{}  Scan", fa::SEARCH), Arc::clone(&fonts.ui))
+                .with_font_size(14.0)
+                .with_color(visuals.accent)
+                .with_v_anchor(VAnchor::CENTER),
+        ));
+    let card = Container::new()
+        .with_fit_height(true)
+        .with_corner_radius(CARD_RADIUS)
+        .with_inner_padding(Insets::symmetric(16.0, 12.0))
+        .with_h_anchor(HAnchor::STRETCH)
+        .add(Box::new(row));
+
     let target = ScanTarget::volume(volume);
     let scan_state = state.clone();
-    let scan = Button::new("Scan", Arc::clone(&fonts.ui))
-        .with_icon(fa::SEARCH, Arc::clone(&fonts.icons))
-        .with_v_anchor(VAnchor::CENTER)
-        .on_click(move || scan_state.choose(target.clone()))
-        .with_name(volume_scan_id(index));
-
-    // The card is a FlexRow with a background rather than a rounded `Container`: inside a
-    // `ScrollView` a fit-height `Container` is measured against an effectively infinite
-    // height and loses its content height to float precision (an agg-gui issue).
+    let scan_platform = Rc::clone(platform);
     Box::new(
-        FlexRow::new()
-            .with_gap(16.0)
+        Clickable::new(Box::new(card))
             .with_background(visuals.widget_bg)
-            .with_inner_padding(Insets::symmetric(16.0, 12.0))
+            .with_corner_radius(CARD_RADIUS)
             .with_h_anchor(HAnchor::STRETCH)
-            .add(Box::new(
-                Label::new(fa::HDD.to_string(), Arc::clone(&fonts.ui))
-                    .with_font_size(30.0)
-                    .with_dim(true)
-                    .with_v_anchor(VAnchor::CENTER),
-            ))
-            .add_flex(Box::new(details), 1.0)
-            .add(Box::new(scan))
+            .on_click(move || start_scan(&scan_state, &scan_platform, target.clone()))
             .with_name(volume_card_id(index)),
     )
 }
@@ -254,7 +272,7 @@ fn build_footer(
             .with_default_action()
             .on_click(move || {
                 if let Some(path) = pick_platform.pick_folder() {
-                    pick_state.choose(ScanTarget::folder(path));
+                    start_scan(&pick_state, &pick_platform, ScanTarget::folder(path));
                 }
             })
             .with_name(CHOOSE_FOLDER_ID);

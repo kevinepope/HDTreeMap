@@ -37,7 +37,7 @@ fn generate(profile: DemoProfile) -> ScanResult {
 
 #[test]
 fn every_drive_id_has_a_profile() {
-    for volume in DemoPlatform.list_volumes() {
+    for volume in DemoPlatform::default().list_volumes() {
         let profile = DemoProfile::from_id(&volume.id).expect("profile for every drive");
         assert_eq!(profile.used_bytes(), volume.used_bytes());
         assert_eq!(profile.mount_path(), volume.mount_path);

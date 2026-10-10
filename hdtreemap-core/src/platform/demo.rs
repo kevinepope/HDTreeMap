@@ -1,13 +1,17 @@
 //! `DemoPlatform`: the browser demo's simulated machine (see `platform.rs`).
 //!
 //! It lists a fixed set of descriptive drives, each showing off a different side of the app.
-//! A drive's `id` is a stable profile name: the demo file-tree generator (`demo_fs`,
-//! milestone M1) uses it to decide what kind of tree to synthesise for that drive. Nothing
-//! here touches the real machine; actions report that they were simulated.
+//! A drive's `id` is a stable profile name: the demo file-tree generator (`demo_fs`) uses it
+//! to decide what kind of tree to synthesise for that drive, and scanning a drive streams
+//! that tree through a `DemoScanner`. Nothing here touches the real machine; actions report
+//! that they were simulated.
 
 use std::path::{Path, PathBuf};
 
 use super::{ActionOutcome, ActionResult, PlatformServices, VolumeInfo};
+use crate::demo_fs::{DemoPace, DemoProfile, DemoScanner};
+use crate::scan::ScanSource;
+use crate::state::ScanTarget;
 
 const GB: u64 = 1024 * 1024 * 1024;
 const TB: u64 = 1024 * GB;
@@ -72,10 +76,28 @@ const DRIVES: &[(&str, &str, &str, u64, u64)] = &[
 const SIMULATED_MESSAGE: &str = "This is a browser demo: nothing on your computer is touched.";
 
 /// The simulated machine behind the web demo.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DemoPlatform;
+#[derive(Clone, Copy, Debug)]
+pub struct DemoPlatform {
+    pace: DemoPace,
+}
+
+impl Default for DemoPlatform {
+    /// Scans at a believable pace, as the web demo shows them.
+    fn default() -> Self {
+        Self {
+            pace: DemoPace::Realistic,
+        }
+    }
+}
 
 impl DemoPlatform {
+    /// A demo machine whose scans run as fast as each frame's time budget allows (tests).
+    pub fn unpaced() -> Self {
+        Self {
+            pace: DemoPace::Unpaced,
+        }
+    }
+
     /// The pretend mount path of the drive with profile `id`.
     pub fn mount_path(id: &str) -> PathBuf {
         PathBuf::from(format!("/demo/{id}"))
@@ -117,6 +139,17 @@ impl PlatformServices for DemoPlatform {
     fn is_demo(&self) -> bool {
         true
     }
+
+    /// Streams the chosen drive's simulated tree. A target that is not one of the demo's
+    /// drives (none can be picked on the web) gets the small USB stick.
+    fn scan_source(&self, target: &ScanTarget) -> Box<dyn ScanSource> {
+        let profile = target
+            .volume_id
+            .as_deref()
+            .and_then(DemoProfile::from_id)
+            .unwrap_or(DemoProfile::UsbStick);
+        Box::new(DemoScanner::new(profile, self.pace))
+    }
 }
 
 #[cfg(test)]
@@ -126,7 +159,7 @@ mod tests {
 
     #[test]
     fn demo_lists_the_six_profiles_in_order() {
-        let volumes = DemoPlatform.list_volumes();
+        let volumes = DemoPlatform::default().list_volumes();
         let ids: Vec<&str> = volumes.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -148,7 +181,7 @@ mod tests {
 
     #[test]
     fn demo_sizes_read_as_specified() {
-        let sizes: Vec<(String, String)> = DemoPlatform
+        let sizes: Vec<(String, String)> = DemoPlatform::default()
             .list_volumes()
             .iter()
             .map(|v| (format_bytes(v.total_bytes), format_bytes(v.free_bytes)))
@@ -169,7 +202,7 @@ mod tests {
 
     #[test]
     fn demo_actions_are_simulated() {
-        let p = DemoPlatform;
+        let p = DemoPlatform::default();
         assert!(p.is_demo());
         assert_eq!(p.pick_folder(), None);
         for result in [
@@ -179,5 +212,24 @@ mod tests {
         ] {
             assert!(matches!(result, Ok(ActionOutcome::Simulated(_))));
         }
+    }
+
+    #[test]
+    fn scanning_a_drive_streams_its_profile() {
+        let p = DemoPlatform::unpaced();
+        let usb = p
+            .list_volumes()
+            .into_iter()
+            .find(|v| v.id == profile::USB_STICK)
+            .expect("usb stick");
+        let mut source = p.scan_source(&ScanTarget::volume(&usb));
+        let crate::scan::ScanPoll::Finished(result) =
+            source.poll(std::time::Duration::from_secs(60))
+        else {
+            panic!("an unpaced USB stick scan finishes in one long poll");
+        };
+        assert_eq!(result.root, usb.mount_path);
+        let used = usb.used_bytes() as f64;
+        assert!((result.tree.total().allocated as f64 - used).abs() / used < 0.02);
     }
 }

@@ -31,7 +31,7 @@ pub fn main() -> Result<(), JsValue> {
     // also fails the wasm start so the page's boot code sees it.
     start(config, |init| {
         let fonts = install_theme_and_fonts(init.device_scale()).map_err(WebShellError::app)?;
-        let app = build_app(AppState::new(), Rc::new(DemoPlatform), fonts);
+        let app = build_app(AppState::new(), Rc::new(DemoPlatform::default()), fonts);
         Ok((app, NoHost))
     })
     .map_err(|err| JsValue::from_str(&err.to_string()))

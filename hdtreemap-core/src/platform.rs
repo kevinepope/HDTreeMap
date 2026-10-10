@@ -10,13 +10,17 @@
 //! - [`DemoPlatform`] (all targets) is the browser demo's simulated machine: a fixed set of
 //!   descriptive drives, and actions that only report they are simulated.
 //!
-//! Scanning is a separate abstraction (`ScanSource`, milestone M1); this trait only covers
-//! the services around it.
+//! Scanning itself is a separate abstraction (`scan::ScanSource`); the platform only picks
+//! the source for a target ([`PlatformServices::scan_source`]): the real disk natively, the
+//! simulated drive's generator on the demo.
 
 mod demo;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+use crate::scan::ScanSource;
+use crate::state::ScanTarget;
 
 pub use demo::{profile, DemoPlatform};
 
@@ -90,6 +94,8 @@ pub trait PlatformServices {
     fn trash(&self, path: &Path) -> ActionResult;
     /// True for the browser demo's simulated machine.
     fn is_demo(&self) -> bool;
+    /// Start scanning `target`, returning the running source the UI polls each frame.
+    fn scan_source(&self, target: &ScanTarget) -> Box<dyn ScanSource>;
 }
 
 /// Filesystem types that are never real storage: kernel interfaces, RAM-backed and
