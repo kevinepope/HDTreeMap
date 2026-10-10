@@ -2,9 +2,18 @@
 
 All notable changes to HDTreeMap are documented here.
 
-## Unreleased
+## 0.1.0 — 2026-10-10
+
+The first release: milestones M0–M6 of `docs/PLAN.md`.
 
 ### Added
+- M6 ship. A release workflow (`.github/workflows/release.yml`) builds a Linux tar.gz, a
+  Windows zip and a universal macOS `HDTreeMap.app` (`scripts/package-macos.sh`) and
+  attaches them to a GitHub Release for a `v*` tag.
+- An app icon drawn by the app's own treemap renderer (`icon.rs`; the window icon, and
+  `examples/make_icons` writes the PNG, `.ico` and `.icns` assets), and the README hero.
+- Native macOS menu items show their keyboard shortcuts.
+- `HDTREEMAP_SCREENSHOT_SHOW=toast|hover` (with `HDTREEMAP_SCREENSHOT_AT=fx,fy`).
 - M5 live map. The results view opens as soon as a scan starts and the map, folder tree,
   legend and totals fill in while it runs, refreshed at most every 400 ms (slower when a
   refresh would take over 30% of the time between them). A strip under the toolbar shows
@@ -91,6 +100,15 @@ All notable changes to HDTreeMap are documented here.
 - CI on Linux, macOS and Windows (fmt, clippy, tests), a wasm check, and a Pages deploy.
 
 ### Changed
+- Toasts use agg-gui's `ToastHost`: success, information and error kinds with icons,
+  fading in and out, paused while the pointer is over them, dismissed by a click.
+- Demo scans grow every top-level folder of the simulated drive together, so the live
+  map shows a mix of the drive from the start (the archive server no longer shows one
+  folder of JPEGs for seconds). The generated trees changed with this.
+- The scan progress bar averages the share of bytes with the share of entries when the
+  scan source estimates its entry count (the demo drives), so it no longer under-reads.
+- The folder tree's root path tooltip and the long-name tooltips come from agg-gui's
+  `TreeView` (names are elided to fit, with the full name as a tooltip).
 - macOS: APFS clones are counted once. A file that may share blocks with another
   (`EF_MAY_SHARE_BLOCKS`) is looked up for its clone id and private size; the first
   member of a clone family counts in full, the others at their private size. Folder

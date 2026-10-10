@@ -5,7 +5,7 @@ You point it at a drive or folder, it scans the folder in parallel, and it shows
 file as a shaded rectangle whose area is proportional to the file's size. The goal is
 a small, fast and clean tool, not a WinDirStat clone with every feature.
 
-Status: **approved 2026-10-10 — M0–M5 done, M6 next.** License MIT. Repo github.com/larsbrubaker/HDTreeMap (rust-apps submodule).
+Status: **v0.1.0 complete (2026-10-10): M0–M6 done.** Open items are listed in §6. License MIT. Repo github.com/larsbrubaker/HDTreeMap (rust-apps submodule).
 
 ---
 
@@ -302,7 +302,7 @@ Each milestone ends green: fmt, clippy `-D warnings` and tests.
 4. **M3 – Linked views** *(done)*: folder tree and extension legend, all synced with the map selection, plus highlight-by-extension.
 5. **M4 – Actions** *(done)*: context menu, reveal, open, copy path, rescan folder, Move to Trash with confirmation, and the menu bar items.
 6. **M5 – Polish and perf** *(done)*: measure on a real full-disk scan of each OS, **live map during the scan**, remembered window bounds and settings, and the colour-by-top-folder mode. *As built:* live map, APFS clone accounting and bulk metadata (§3.2), colour by top-level folder (§3.4), settings and Recent (§3.5); measured on macOS only (Linux and Windows full-disk runs are still to do).
-7. **M6 – Ship**: README with a hero screenshot, a GitHub release workflow (zipped binaries for all three OSes, a macOS `.app` via `cargo-bundle`), and the rust-apps README entry and submodule.
+7. **M6 – Ship** *(done)*: README with a hero screenshot, a GitHub release workflow (zipped binaries for all three OSes, a macOS `.app` via `cargo-bundle`), and the rust-apps README entry and submodule. *As built:* `release.yml` builds Linux (tar.gz), Windows (zip, icon set with rcedit) and a universal macOS `.app` assembled by `scripts/package-macos.sh` (lipo, an `Info.plist` template, ad-hoc signature; no `cargo-bundle`), on a `v*` tag or by hand; the app icon is drawn by the app's own renderer (`icon.rs`, `examples/make_icons`). Toasts moved to agg-gui's `ToastHost`; the demo generator interleaves top-level folders so the live map shows a mix early. The rust-apps README entry is left to the superproject.
 
 ## 5. Risks and open questions
 - **Million-node trees in `TreeView`**: it must be lazy, expanding only on demand. Check this early in M3.
@@ -319,3 +319,19 @@ Each milestone ends green: fmt, clippy `-D warnings` and tests.
   folder, records keyed by folder token instead of depth order) is the next thing to try
   if whole-disk speed matters more.
 - **wasm is single-threaded**: the demo scan and the rasteriser must be time-sliced or fast enough serially.
+
+## 6. Open items after v0.1.0
+
+- **A walker of our own** (rayon scope per folder, records keyed by folder token) in place
+  of jwalk, whose directory reads funnel through one mutex on wide trees (§5).
+- **Hard links on Windows** are counted once per link; de-duplicating them needs a handle
+  per file (`GetFileInformationByHandle`), so it wants a cheap way to find the files with
+  more than one link first.
+- **Full-disk measurements on Linux and Windows** (M5 measured macOS only).
+- **Signed and notarized builds**: an Apple Developer ID and notarization for the `.app`,
+  Authenticode for the Windows `.exe`; an installer or `.dmg`, and Linux packages
+  (AppImage, `.deb`, Flatpak).
+- **Sunburst view** and other v2 ideas from §2's "not in v1" list: duplicate finder,
+  reading the MFT, saved scans, network-drive tuning.
+- **Publishing to crates.io** (the crates carry the metadata; agg-gui-web-shell must be
+  published first).
