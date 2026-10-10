@@ -102,6 +102,12 @@ Scanning is behind a `ScanSource` abstraction: `FsScanner` (native only, `cfg(no
 - **Arena tree**: `Vec<Node>` indexed by `u32`. Each node holds `parent`, `first_child`, `next_sibling`, a name index (all names in one `String` slab), `alloc_size: u64`, `apparent_size: u64`, `file_count: u32`, an extension id (`u16`), and flags (dir, error, link, etc.). That is about 40 bytes per node, so 5 million files fit in roughly 200 MB.
 - Children are sorted by the active size, descending, after the scan finishes (and again when the size mode changes).
 - `ExtTable`: extension id → name, total bytes, count, colour. Built from the finished tree.
+- *As built (M1):* `Node` is exactly 40 bytes (a test pins it): the name has no length field
+  because names are appended to the slab in node order, so a name ends where the next
+  node's begins. Directory sizes are subtree totals of their files (a directory's own blocks
+  are not counted). `remove_subtree` unlinks and flags the subtree and subtracts it from
+  every ancestor. "Largest folders" skips wrapper folders whose biggest subfolder holds
+  ≥ 90% of them, so a chain like `Users → me → Library` lists the folder that matters.
 
 ### 3.2 Scanner (`scan/`)
 - `jwalk` with a rayon pool, `follow_links(false)`.
@@ -114,6 +120,12 @@ Scanning is behind a `ScanSource` abstraction: `FsScanner` (native only, `cfg(no
   - calls `UiQueue::signal_async_state_change()` at most about every 100 ms;
   - sends the finished arena back over a channel.
 - Cancel is an `AtomicBool` the walker checks.
+- *As built (M1):* the platform picks the source (`PlatformServices::scan_source`). The UI
+  polls it once per frame from an agg-gui `ui_thread` drain hook (`state/pump.rs`) with an
+  8 ms budget; `DemoScanner` generates its chunk in that slice (paced to a believable
+  1.5–20 s per drive), `FsScanner` only checks its channel. Hard links are de-duplicated on
+  Unix only; Windows junctions and mount points are not followed because std reports them
+  as symlinks. Names are stored as UTF-8 (lossy for non-UTF-8 names).
 - **Design choice:** v1 shows a progress screen and then the full map, which keeps the model simple. Showing the map live while scanning (as SpaceSniffer does) is a stretch goal; the arena design doesn't rule it out.
 
 ### 3.3 Layout (`layout/`)
@@ -160,7 +172,7 @@ All icons are Font Awesome code points, per the agg-gui rules.
 Each milestone ends green: fmt, clippy `-D warnings` and tests.
 
 1. **M0 – Scaffold**: workspace (core / native / wasm), CLAUDE.md (copied from the Critters rules), MIT LICENSE, pre-commit scripts, CI matrix on all three OSes plus a wasm check and Pages deploy, and the start screen running both natively (real volumes) and in the browser (simulated drive).
-2. **M1 – Scanner + model**: jwalk scan into the arena, both size modes, inode dedup, filesystem boundaries, cancel, and error collection. Tests use temporary directory trees (including hard links and symlinks, on Unix). Includes a CLI-ish `--dump-top N` debug flag for checking the scanner without the UI.
+2. **M1 – Scanner + model** *(done)*: jwalk scan into the arena, both size modes, inode dedup, filesystem boundaries, cancel, and error collection. Tests use temporary directory trees (including hard links and symlinks, on Unix). Includes a CLI-ish `--dump-top N` debug flag for checking the scanner without the UI.
 3. **M2 – Treemap**: squarify, cushion rasteriser, `TreemapView` with hover and status bar, progress screen, and zoom in and out with the breadcrumb. Unit tests for layout invariants and a golden-image test for the rasteriser.
 4. **M3 – Linked views**: folder tree and extension legend, all synced with the map selection, plus highlight-by-extension.
 5. **M4 – Actions**: context menu, reveal, open, copy path, rescan folder, Move to Trash with confirmation, and the menu bar items.

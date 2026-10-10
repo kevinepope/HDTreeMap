@@ -33,28 +33,34 @@ hdtreemap-core/     rlib: everything testable, no platform code
   src/format.rs       human-readable sizes
   src/platform.rs     PlatformServices trait, VolumeInfo, volume-list cleanup
   src/platform/demo.rs  DemoPlatform: the web demo's simulated drives
-  src/state.rs        AppState (screen, scan target), shared Rc cells
-  src/ui/             widgets: start screen, target screen (later: treemap, tree, legend, ...)
-  tests/              headless UI tests, file_line_count guardrail
-hdtreemap-native/   bin `hdtreemap`: agg-gui-shell + NativePlatform (sysinfo, rfd, opener, trash)
+  src/model/          arena Tree (40-byte Node), TreeBuilder, SizeMode, ExtTable
+  src/scan/           ScanSource, ScanProgress, FsScanner (native: jwalk on a worker thread)
+  src/demo_fs/        DemoScanner + per-drive recipes for the simulated drives (all targets)
+  src/state.rs        AppState (screen, running scan, finished result); state/pump.rs polls
+                      the running scan once per frame from an agg-gui ui_thread drain hook
+  src/ui/             widgets: start, scan and results screens (later: treemap, tree, legend)
+  tests/              headless UI tests (common/ harness), scanner tests, file_line_count
+hdtreemap-native/   bin `hdtreemap`: agg-gui-shell + NativePlatform (sysinfo, rfd, opener, trash),
+                    CLI (`--demo [ID]`, `--dump-top N [PATH | --demo ID]`)
 hdtreemap-wasm/     cdylib: agg-gui-web-shell + DemoPlatform (not a default member)
 demo/               static page + bun/vite bundle for GitHub Pages
 ```
 
-Later milestones add `scan/`, `model/`, `layout/`, `render/` and `demo_fs` to the core, as
-laid out in `docs/PLAN.md` §3. Add a module when it holds real code, not before.
+Later milestones add `layout/` and `render/` to the core, as laid out in `docs/PLAN.md` §3.
+Add a module when it holds real code, not before.
 
 ## PlatformServices and ScanSource
 
 Two seams keep the core free of platform code and let the browser demo run the real app:
 
 - **`PlatformServices`** (`platform.rs`): what the UI needs from the OS — list volumes,
-  pick a folder, reveal, open, trash, and `is_demo`. `NativePlatform` (in
+  pick a folder, reveal, open, trash, `is_demo`, and `scan_source` (which `ScanSource`
+  scans a target). `NativePlatform` (in
   `hdtreemap-native`) talks to the real OS; `DemoPlatform` (in the core, all targets) lists
   descriptive simulated drives and reports actions as simulated. Pure logic that the native
   impl relies on (filtering pseudo filesystems, de-duplicating mounts) lives in the core so
   it is unit-tested on every OS.
-- **`ScanSource`** (milestone M1): how a tree is produced. `FsScanner` (native only, jwalk +
+- **`ScanSource`** (`scan/mod.rs`): how a tree is produced. `FsScanner` (native only, jwalk +
   rayon) walks the real disk; `DemoScanner` (all targets, time-sliced for single-threaded
   wasm) streams a synthetic tree whose shape comes from the chosen demo drive's profile id
   (`VolumeInfo::id`). Both feed the same incremental tree builder, so the UI cannot tell
@@ -81,6 +87,7 @@ wasm-pack build hdtreemap-wasm --target web --out-dir ../demo/public/pkg --no-ty
 ```
 
 `HDTREEMAP_SCREENSHOT=out.png cargo run -p hdtreemap-native` captures a frame and exits.
+`cargo run --release -p hdtreemap-native -- --dump-top 15 PATH` checks the scanner headless.
 Run `scripts/pre-commit-check.sh` (or `.ps1`) before every commit; it mirrors CI.
 
 ## Workflow: commit as you go
