@@ -13,6 +13,20 @@ description = "Target-agnostic core of HDTreeMap, a disk-usage treemap viewer."
 
 [dependencies]
 agg-gui = { workspace = true }
+# `Instant` that works on wasm32-unknown-unknown (std's panics there); agg-gui uses it too.
+web-time = "1"
 
 [lib]
 crate-type = ["rlib"]
+
+# The real-disk scanner (`scan::fs`) only exists natively: the browser cannot read disks.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Parallel directory walk on a rayon pool (the dua-cli scanner's walker).
+jwalk = "0.8"
+
+# Allocated ("size on disk") for compressed / sparse / cloud files on Windows.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = "3"
