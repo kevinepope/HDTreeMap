@@ -475,3 +475,76 @@ fn apfs_clones_are_counted_once() {
         "{members:?}"
     );
 }
+
+/// A folder of thousands of entries (several bulk reads on macOS) is counted exactly:
+/// files, a symlink, a hard link once, a subfolder, and (on APFS) a clone once.
+#[test]
+fn a_huge_folder_is_counted_like_a_small_one() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let big = dir.path().join("big");
+    fs::create_dir(&big).expect("mkdir");
+    let n = 5000;
+    for i in 0..n {
+        fs::write(big.join(format!("f{i:05}.dat")), vec![b'x'; i % 700]).expect("write");
+    }
+    fs::create_dir(big.join("sub")).expect("mkdir");
+    write(&big.join("sub/inner.txt"), 10);
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("f00001.dat", big.join("link")).expect("symlink");
+        fs::hard_link(big.join("f00002.dat"), big.join("hard")).expect("hard link");
+    }
+    let (result, progress) = scan(dir.path());
+    let tree = &result.tree;
+    let want_bytes: u64 = (0..n as u64).map(|i| i % 700).sum::<u64>() + 10;
+    let links = if cfg!(unix) { 1 } else { 0 };
+    assert_eq!(
+        tree.file_count(),
+        n as u64 + 1 + links,
+        "every file, the symlink, no hard link"
+    );
+    assert_eq!(
+        tree.dir_count(),
+        2,
+        "big and big/sub (the root is not counted)"
+    );
+    let apparent = tree.total().apparent;
+    let link_len = if cfg!(unix) {
+        "f00001.dat".len() as u64
+    } else {
+        0
+    };
+    assert_eq!(apparent, want_bytes + link_len);
+    assert!(
+        find(tree, "big/sub/inner.txt").is_some(),
+        "its subfolder was entered"
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(progress.snapshot().files, tree.file_count());
+
+    // macOS APFS: clones in a big folder count once too.
+    #[cfg(target_os = "macos")]
+    {
+        let data: Vec<u8> = (0..1_000_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8)
+            .collect();
+        fs::write(big.join("blob.bin"), &data).expect("write");
+        let cloned = std::process::Command::new("cp")
+            .arg("-c")
+            .arg(big.join("blob.bin"))
+            .arg(big.join("blob-clone.bin"))
+            .status()
+            .is_ok_and(|s| s.success());
+        if cloned {
+            let (result, _) = scan(dir.path());
+            let tree = &result.tree;
+            let a = tree
+                .sizes(find(tree, "big/blob.bin").expect("blob"))
+                .allocated;
+            let b = tree
+                .sizes(find(tree, "big/blob-clone.bin").expect("clone"))
+                .allocated;
+            assert!(a.max(b) >= 1_000_000 && a.min(b) < 64 * 1024, "{a} and {b}");
+        }
+    }
+}
