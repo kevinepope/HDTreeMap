@@ -13,9 +13,12 @@
 //! frame (an agg-gui `ui_thread` drain hook) through [`AppState::pump`], which moves the app
 //! to the results (treemap) screen when the source hands back its tree.
 //!
-//! What the treemap shows of the finished scan (zoom root, hover, selection, shading) and
-//! the finer-grained versions its widgets watch are in `state/view.rs`.
+//! What the treemap shows of the finished scan (zoom root, hover, selection, highlighted
+//! extension, shading) and the finer-grained versions its widgets watch are in
+//! `state/view.rs`; the palette and the zoom root's extension table, cached for every view
+//! to share, in `state/derived.rs`.
 
+mod derived;
 mod pump;
 mod view;
 
@@ -27,7 +30,7 @@ use std::time::Duration;
 use web_time::Instant;
 
 pub use pump::{install_scan_pump, pump_scans, FRAME_BUDGET};
-pub use view::{Hover, MapCounters};
+pub use view::{Hover, MapCounters, SIDE_SPLIT_DEFAULT, TREE_SPLIT_DEFAULT};
 
 use crate::model::{ExtTable, SizeMode};
 use crate::platform::VolumeInfo;

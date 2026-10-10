@@ -2,6 +2,7 @@
 //! switching, the scan targets, and the treemap's view state (zoom, hover, selection,
 //! shading and the versions the widgets watch).
 
+use std::rc::Rc;
 use std::time::Duration;
 
 use super::*;
@@ -246,4 +247,89 @@ fn a_new_result_resets_the_view() {
     assert_eq!(state.selected(), None);
     assert_eq!(state.shading(), Shading::Flat, "shading is a preference");
     assert!(state.tree_version() > tree);
+}
+
+#[test]
+fn the_extension_highlight_toggles_and_resets_with_a_new_scan() {
+    let state = finished_usb();
+    let top = state
+        .with_result(|_, exts| exts.rows()[0].ext)
+        .expect("an extension");
+    let (map, detail) = (state.map_version(), state.detail_version());
+    state.toggle_highlight_ext(top);
+    assert_eq!(state.highlight_ext(), Some(top));
+    assert_eq!(state.map_version(), map, "a highlight never re-lays out");
+    assert!(state.detail_version() > detail);
+    state.toggle_highlight_ext(top);
+    assert_eq!(state.highlight_ext(), None, "a second toggle clears it");
+    state.set_highlight_ext(Some(u16::MAX));
+    assert_eq!(state.highlight_ext(), None, "unknown ids are ignored");
+    state.set_highlight_ext(Some(top));
+    state.start_scan(usb_target(), usb_scan());
+    while state.pump(Duration::from_secs(5)) {}
+    assert_eq!(
+        state.highlight_ext(),
+        None,
+        "a new scan starts unhighlighted"
+    );
+
+    // A highlight asked for before the scan applies when it finishes.
+    let name = state
+        .with_result(|_, exts| exts.rows()[1].name.clone())
+        .expect("a second extension");
+    state.highlight_on_finish(Some(name.clone()));
+    state.start_scan(usb_target(), usb_scan());
+    while state.pump(Duration::from_secs(5)) {}
+    let highlighted = state
+        .highlight_ext()
+        .and_then(|e| state.with_result(|r, _| r.tree.ext_name(e).to_string()));
+    assert_eq!(highlighted, Some(name));
+}
+
+#[test]
+fn the_palette_is_cached_until_the_tree_changes() {
+    let state = finished_usb();
+    let a = state.palette().expect("palette");
+    let b = state.palette().expect("palette");
+    assert!(Rc::ptr_eq(&a, &b), "one palette per tree version");
+    state.set_size_mode(SizeMode::Apparent);
+    let c = state.palette().expect("palette");
+    assert!(!Rc::ptr_eq(&a, &c), "a size-mode switch rebuilds it");
+    assert!(AppState::new().palette().is_none());
+}
+
+#[test]
+fn zoom_extensions_follow_the_zoom_root() {
+    let state = finished_usb();
+    let whole = state.zoom_extensions().expect("table");
+    let scan_rows = state
+        .with_result(|_, exts| exts.rows().to_vec())
+        .expect("rows");
+    assert_eq!(whole.rows(), &scan_rows[..]);
+    assert!(Rc::ptr_eq(&whole, &state.zoom_extensions().expect("table")));
+    let dir = first_dir(&state);
+    state.set_zoom_root(dir);
+    let zoomed = state.zoom_extensions().expect("table");
+    let expected = state
+        .with_result(|r, _| ExtTable::from_subtree(&r.tree, dir).rows().to_vec())
+        .expect("rows");
+    assert_eq!(zoomed.rows(), &expected[..]);
+    let files: u64 = zoomed.rows().iter().map(|r| r.count).sum();
+    let dir_files = state
+        .with_result(|r, _| r.tree.node(dir).map(|n| u64::from(n.file_count())))
+        .flatten();
+    assert_eq!(Some(files), dir_files);
+}
+
+#[test]
+fn splitter_ratios_survive_rebuilds_of_the_view() {
+    let state = finished_usb();
+    assert_eq!(state.side_split().get(), SIDE_SPLIT_DEFAULT);
+    assert_eq!(state.tree_split().get(), TREE_SPLIT_DEFAULT);
+    // A divider drag writes the shared handle; a later view reads the same value.
+    state.side_split().set(0.4);
+    assert_eq!(state.side_split().get(), 0.4);
+    state.start_scan(usb_target(), usb_scan());
+    while state.pump(Duration::from_secs(5)) {}
+    assert_eq!(state.side_split().get(), 0.4, "kept for the session");
 }

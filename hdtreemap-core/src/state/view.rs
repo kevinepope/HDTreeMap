@@ -1,7 +1,9 @@
-//! The treemap view's shared state: zoom root, hovered and selected items, shading, and the
-//! counters the views key their caches on. It lives in `AppState` (not in the widget) so
-//! the status bar, the breadcrumb and the linked views of M3 (folder tree, extension legend)
-//! all read and write the same selection.
+//! The treemap view's shared state: zoom root, hovered and selected items, the highlighted
+//! extension, shading, the splitter positions, and the counters the views key their caches
+//! on. It lives in `AppState` (not in a widget) so the map, the status bar, the breadcrumb,
+//! the folder tree and the extension legend all read and write the same selection. The
+//! palette and the zoom root's extension table, derived from the tree and cached for every
+//! view to share, are in `state/derived.rs`.
 //!
 //! Three counters tell the widgets what changed:
 //!
@@ -9,18 +11,27 @@
 //!   re-sort; later, Move to Trash). The treemap rebuilds its palette and layout.
 //! - [`AppState::map_version`] — anything that changes the map's picture: the tree, the
 //!   zoom root, the shading. The breadcrumb rebuilds on it.
-//! - [`AppState::detail_version`] — anything the status bar shows: hover, selection, and
-//!   every map change. Mouse moves bump only this one, so they never re-rasterise the map.
+//! - [`AppState::detail_version`] — anything the status bar shows: hover, selection, the
+//!   highlighted extension, and every map change. Mouse moves bump only this one, so they
+//!   never re-rasterise the map.
 //!
 //! [`MapCounters`] count the treemap's layout and raster passes, for `HDTREEMAP_STATS` and
 //! for the tests that check hovering does not re-rasterise.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
+use agg_gui::SplitterRatio;
+
+use super::derived::DerivedCache;
 use super::AppState;
 use crate::layout::AggregateInfo;
 use crate::model::NodeId;
 use crate::render::Shading;
+
+/// Default share of the window width for the left column (folder tree and legend).
+pub const SIDE_SPLIT_DEFAULT: f64 = 0.28;
+/// Default share of the left column's height for the folder tree (the legend gets the rest).
+pub const TREE_SPLIT_DEFAULT: f64 = 0.6;
 
 /// What the pointer is over on the map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,7 +54,13 @@ pub(super) struct ViewState {
     zoom_root: Cell<NodeId>,
     hovered: Cell<Option<Hover>>,
     selected: Cell<Option<NodeId>>,
+    highlight_ext: Cell<Option<u16>>,
+    /// Extension name to highlight when the next scan finishes (`--highlight`).
+    pending_highlight: RefCell<Option<String>>,
     shading: Cell<Shading>,
+    side_split: SplitterRatio,
+    tree_split: SplitterRatio,
+    pub(super) derived: DerivedCache,
     tree_version: Cell<u64>,
     map_version: Cell<u64>,
     detail_version: Cell<u64>,
@@ -56,7 +73,12 @@ impl ViewState {
             zoom_root: Cell::new(NodeId(0)),
             hovered: Cell::new(None),
             selected: Cell::new(None),
+            highlight_ext: Cell::new(None),
+            pending_highlight: RefCell::new(None),
             shading: Cell::new(Shading::default()),
+            side_split: SplitterRatio::new(SIDE_SPLIT_DEFAULT),
+            tree_split: SplitterRatio::new(TREE_SPLIT_DEFAULT),
+            derived: DerivedCache::default(),
             tree_version: Cell::new(0),
             map_version: Cell::new(0),
             detail_version: Cell::new(0),
@@ -74,12 +96,19 @@ impl AppState {
         &self.inner.view
     }
 
-    /// The finished tree changed: start over at its root with nothing hovered or selected.
+    /// The finished tree changed: start over at its root with nothing hovered, selected or
+    /// highlighted (except an extension asked for with [`AppState::highlight_on_finish`]).
     pub(super) fn reset_view(&self) {
         let view = self.view();
         view.zoom_root.set(NodeId(0));
         view.hovered.set(None);
         view.selected.set(None);
+        let pending = view.pending_highlight.borrow_mut().take();
+        let ext = pending.and_then(|name| {
+            self.with_result(|_, exts| exts.get(&name).map(|row| row.ext))
+                .flatten()
+        });
+        view.highlight_ext.set(ext);
         self.tree_changed();
     }
 
@@ -166,6 +195,51 @@ impl AppState {
             self.view().selected.set(node);
             self.detail_changed();
         }
+    }
+
+    /// The extension whose files the map highlights (the legend's chosen row).
+    pub fn highlight_ext(&self) -> Option<u16> {
+        self.view().highlight_ext.get()
+    }
+
+    /// Highlight the files of extension id `ext` (or clear it). Ids the finished tree does
+    /// not have are ignored. No-op if unchanged.
+    pub fn set_highlight_ext(&self, ext: Option<u16>) {
+        let ok = ext.is_none_or(|e| {
+            self.with_result(|r, _| usize::from(e) < r.tree.ext_count())
+                .unwrap_or(false)
+        });
+        if ok && self.highlight_ext() != ext {
+            self.view().highlight_ext.set(ext);
+            self.detail_changed();
+        }
+    }
+
+    /// Highlight `ext`, or clear the highlight if it is the highlighted one already (a
+    /// second click on the same legend row).
+    pub fn toggle_highlight_ext(&self, ext: u16) {
+        let next = if self.highlight_ext() == Some(ext) {
+            None
+        } else {
+            Some(ext)
+        };
+        self.set_highlight_ext(next);
+    }
+
+    /// Highlight extension `name` (lower case, no dot) once the next scan finishes.
+    pub fn highlight_on_finish(&self, name: Option<String>) {
+        *self.view().pending_highlight.borrow_mut() = name;
+    }
+
+    /// Where the divider between the left column and the map sits (kept for the session:
+    /// the main view hands the same handle to every `Splitter` it builds).
+    pub fn side_split(&self) -> SplitterRatio {
+        self.view().side_split.clone()
+    }
+
+    /// Where the divider between the folder tree and the extension legend sits.
+    pub fn tree_split(&self) -> SplitterRatio {
+        self.view().tree_split.clone()
     }
 
     pub fn shading(&self) -> Shading {
