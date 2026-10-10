@@ -205,6 +205,10 @@ fn scan_with_limit(
                 let path = err
                     .path()
                     .map_or_else(|| root.to_path_buf(), Path::to_path_buf);
+                if path == root {
+                    // The root itself is missing or unreadable: flag it, as any folder.
+                    builder.mark(builder.root(), NodeFlags::ERROR);
+                }
                 errors.record(&path, err.to_string());
                 progress.add_error();
             }

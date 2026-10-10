@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hdtreemap_core::model::{ExtTable, NodeId, SizeMode, Tree};
+use hdtreemap_core::model::{ExtTable, NodeFlags, NodeId, SizeMode, Tree};
 use hdtreemap_core::scan::{
     scan_blocking, FsScanner, ScanPoll, ScanProgress, ScanResult, ScanSource,
 };
@@ -130,6 +130,11 @@ fn a_missing_root_is_an_error_not_a_crash() {
     assert_eq!(result.errors.total(), 1);
     assert_eq!(result.tree.file_count(), 0);
     assert_eq!(progress.snapshot().errors, 1);
+    let root = result.tree.node(result.tree.root()).expect("root");
+    assert!(
+        root.flags().contains(NodeFlags::ERROR),
+        "the root is flagged"
+    );
 }
 
 #[test]
@@ -194,7 +199,6 @@ fn a_cancelled_scan_stops_early() {
 #[cfg(unix)]
 mod unix {
     use super::*;
-    use hdtreemap_core::model::NodeFlags;
     use std::os::unix::fs::{symlink, PermissionsExt};
 
     #[test]
@@ -234,6 +238,29 @@ mod unix {
         let canonical = fs::canonicalize(dir.path().join("real")).expect("canonical");
         assert_eq!(result.tree.path(result.tree.root()), canonical);
         assert_eq!(result.tree.file_count(), 4);
+    }
+
+    #[test]
+    fn a_root_linking_to_a_file_scans_that_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        write(&dir.path().join("data/real.bin"), 7000);
+        symlink(
+            dir.path().join("data/real.bin"),
+            dir.path().join("link.bin"),
+        )
+        .expect("link");
+        let (result, _) = scan(&dir.path().join("link.bin"));
+        let tree = &result.tree;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(tree.file_count(), 1);
+        assert_eq!(
+            tree.total().apparent,
+            7000,
+            "the file's size, not the link's"
+        );
+        let file = tree.children(tree.root()).next().expect("the file");
+        let real = fs::canonicalize(dir.path().join("data/real.bin")).expect("canonical");
+        assert_eq!(tree.path(file), real);
     }
 
     #[test]
