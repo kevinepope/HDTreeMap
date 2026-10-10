@@ -94,6 +94,15 @@ mod tests {
     use super::*;
     use crate::model::{NodeFlags, SizeMode, Sizes, TreeBuilder};
 
+    /// `parts` joined the way the platform joins paths (`\` on Windows).
+    fn native(parts: &[&str]) -> String {
+        let mut path = std::path::PathBuf::from("/scan");
+        for part in parts {
+            path.push(part);
+        }
+        path.to_string_lossy().into_owned()
+    }
+
     fn tree() -> (Tree, NodeId, NodeId) {
         let mut b = TreeBuilder::new("/scan");
         let root = b.root();
@@ -116,7 +125,10 @@ mod tests {
         );
         assert_eq!(
             file,
-            "a.pdf \u{b7} 3.0 KB \u{b7} 75.0% of /scan \u{b7} /scan/docs/a.pdf"
+            format!(
+                "a.pdf \u{b7} 3.0 KB \u{b7} 75.0% of /scan \u{b7} {}",
+                native(&["docs", "a.pdf"])
+            )
         );
         let dir = tooltip(
             &tree,
@@ -128,7 +140,10 @@ mod tests {
         );
         assert_eq!(
             dir,
-            "docs \u{b7} 3.0 KB \u{b7} 100.0% of docs \u{b7} 1 file \u{b7} /scan/docs"
+            format!(
+                "docs \u{b7} 3.0 KB \u{b7} 100.0% of docs \u{b7} 1 file \u{b7} {}",
+                native(&["docs"])
+            )
         );
         let agg = Hover {
             node: docs,
@@ -139,7 +154,10 @@ mod tests {
         };
         assert_eq!(
             tooltip(&tree, tree.root(), agg),
-            "12 small items \u{b7} 2.0 KB \u{b7} 50.0% of /scan \u{b7} in /scan/docs"
+            format!(
+                "12 small items \u{b7} 2.0 KB \u{b7} 50.0% of /scan \u{b7} in {}",
+                native(&["docs"])
+            )
         );
     }
 
@@ -154,7 +172,7 @@ mod tests {
                     aggregate: None
                 }
             ),
-            "/scan/docs/a.pdf \u{2014} 3.0 KB"
+            format!("{} \u{2014} 3.0 KB", native(&["docs", "a.pdf"]))
         );
         assert_eq!(
             status_line(
@@ -164,7 +182,7 @@ mod tests {
                     aggregate: None
                 }
             ),
-            "/scan/docs \u{2014} 3.0 KB in 1 file"
+            format!("{} \u{2014} 3.0 KB in 1 file", native(&["docs"]))
         );
         let agg = Hover {
             node: docs,
@@ -175,7 +193,7 @@ mod tests {
         };
         assert_eq!(
             status_line(&tree, agg),
-            "1 small item in /scan/docs \u{2014} 10 B"
+            format!("1 small item in {} \u{2014} 10 B", native(&["docs"]))
         );
         assert_eq!(files_phrase(1_234), "1,234 files");
     }
