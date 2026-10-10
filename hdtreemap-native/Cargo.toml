@@ -1,0 +1,30 @@
+# hdtreemap-native: the desktop shell. agg-gui-shell owns the window and event loop; this
+# crate only names the window, reads the command line and implements PlatformServices with
+# the real OS (sysinfo volumes, rfd folder picker, opener, trash).
+[package]
+name = "hdtreemap-native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native (winit + wgpu) shell for HDTreeMap."
+
+[[bin]]
+name = "hdtreemap"
+path = "src/main.rs"
+
+[dependencies]
+hdtreemap-core = { path = "../hdtreemap-core" }
+agg-gui = { workspace = true }
+agg-gui-shell = { workspace = true }
+# Mounted volumes with total / free space. Only the `disk` part is needed.
+sysinfo = { version = "0.39", default-features = false, features = ["disk"] }
+# Native folder picker. The default `xdg-portal` backend talks to the desktop portal over
+# D-Bus on Linux, so no GTK headers are needed to build.
+rfd = "0.17"
+# Open a file with its default application.
+opener = "0.9"
+# Move to the system trash / recycle bin (never a permanent delete).
+trash = "5"

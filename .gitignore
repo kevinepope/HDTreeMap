@@ -1,6 +1,21 @@
 /target
 **/target
-demo/public/pkg
-demo/dist
+**/*.rs.bk
+
+# Web demo build outputs
 demo/node_modules
+demo/dist
+demo/public/pkg
+demo/bun.lock
+hdtreemap-wasm/pkg
+
+# OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Local agent state
+.claude/settings.local.json

@@ -1,0 +1,18 @@
+# hdtreemap-core: the target-agnostic heart of HDTreeMap. Everything testable lives here
+# (state, formatting, the PlatformServices contract and its demo implementation, widgets).
+# No platform code: the shells implement PlatformServices.
+[package]
+name = "hdtreemap-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Target-agnostic core of HDTreeMap, a disk-usage treemap viewer."
+
+[dependencies]
+agg-gui = { workspace = true }
+
+[lib]
+crate-type = ["rlib"]

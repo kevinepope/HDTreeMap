@@ -1,0 +1,21 @@
+# hdtreemap-wasm: the browser shell (wasm cdylib). agg-gui-web-shell owns the canvas, the
+# GPU surface, the frame loop and DOM input; this crate boots hdtreemap-core's app with the
+# simulated DemoPlatform. Natively it compiles to an empty rlib so `cargo build --workspace`
+# stays green on every platform.
+[package]
+name = "hdtreemap-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebAssembly (browser) shell for the HDTreeMap demo."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+hdtreemap-core = { path = "../hdtreemap-core" }
+agg-gui-web-shell = { workspace = true }
+wasm-bindgen = "0.2"
