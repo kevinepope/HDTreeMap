@@ -1,4 +1,4 @@
-//! The scan pump: polls every running scan once per UI frame.
+//! The scan pump: polls every running scan (and folder rescan) once per UI frame.
 //!
 //! agg-gui drains its `ui_thread` queue every loop iteration and before each painted frame,
 //! then runs the registered drain hooks; [`pump_scans`] is HDTreeMap's hook (installed by
@@ -59,8 +59,9 @@ pub fn pump_scans() {
         let mut running = r.borrow_mut();
         // Keep scans registered during this pump, drop finished and dead ones.
         running.retain(|w| {
-            w.upgrade()
-                .is_some_and(|inner| inner.scan.borrow().is_some())
+            w.upgrade().is_some_and(|inner| {
+                inner.scan.borrow().is_some() || inner.rescan.borrow().is_some()
+            })
         });
         for w in still_running {
             if !running.iter().any(|kept| kept.as_ptr() == w.as_ptr()) {

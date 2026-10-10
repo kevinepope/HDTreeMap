@@ -20,7 +20,7 @@ fn usb_target() -> ScanTarget {
     ScanTarget::volume(&volume)
 }
 
-fn usb_scan() -> Box<dyn ScanSource> {
+pub(super) fn usb_scan() -> Box<dyn ScanSource> {
     Box::new(DemoScanner::new(DemoProfile::UsbStick, DemoPace::Unpaced))
 }
 
@@ -154,7 +154,7 @@ fn the_demo_platform_scans_the_chosen_drive() {
     assert_eq!(root, Some(target.path));
 }
 
-fn finished_usb() -> AppState {
+pub(super) fn finished_usb() -> AppState {
     let state = AppState::new();
     state.start_scan(usb_target(), usb_scan());
     while state.pump(Duration::from_secs(5)) {}

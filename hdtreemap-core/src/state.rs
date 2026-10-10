@@ -17,9 +17,13 @@
 //! extension, shading) and the finer-grained versions its widgets watch are in
 //! `state/view.rs`; the palette and the zoom root's extension table, cached for every view
 //! to share, in `state/derived.rs`; the last volume list (for free space) in
-//! `state/volumes.rs`.
+//! `state/volumes.rs`; edits after a scan (Move to Trash, Rescan Folder) in
+//! `state/edits.rs`; toasts, the confirmation and About sheets, context-menu requests and
+//! Quit in `state/notices.rs`.
 
 mod derived;
+mod edits;
+mod notices;
 mod pump;
 mod view;
 mod volumes;
@@ -31,6 +35,8 @@ use std::time::Duration;
 
 use web_time::Instant;
 
+pub use edits::RescanStatus;
+pub use notices::{ContextRequest, Toast, ToastKind, ERROR_TOAST_TIME, TOAST_TIME};
 pub use pump::{install_scan_pump, pump_scans, FRAME_BUDGET};
 pub use view::{Hover, MapCounters, SIDE_SPLIT_DEFAULT, TREE_SPLIT_DEFAULT};
 
@@ -112,6 +118,9 @@ struct Inner {
     finished: RefCell<Option<Finished>>,
     view: view::ViewState,
     volumes: volumes::VolumeCache,
+    /// A folder rescan running in the background (`state/edits.rs`).
+    rescan: RefCell<Option<edits::RescanJob>>,
+    notices: notices::Notices,
 }
 
 /// Everything the UI reads and writes. Cheap to clone; clones share the same state.
@@ -133,6 +142,8 @@ impl AppState {
                 finished: RefCell::new(None),
                 view: view::ViewState::new(),
                 volumes: volumes::VolumeCache::default(),
+                rescan: RefCell::new(None),
+                notices: notices::Notices::default(),
             }),
         }
     }
@@ -155,6 +166,7 @@ impl AppState {
     /// cancels) any scan already running.
     pub fn start_scan(&self, target: ScanTarget, source: Box<dyn ScanSource>) {
         self.drop_scan();
+        self.cancel_rescan();
         self.inner.finished.borrow_mut().take();
         *self.inner.scan.borrow_mut() = Some(source);
         self.inner.last_progress.set(None);
@@ -170,6 +182,7 @@ impl AppState {
     /// Return to the start screen, cancelling any scan and dropping any result.
     pub fn back_to_start(&self) {
         self.drop_scan();
+        self.cancel_rescan();
         self.inner.finished.borrow_mut().take();
         self.set_screen(Screen::Start);
     }
@@ -189,6 +202,12 @@ impl AppState {
     /// keep its result and switch to the results screen. Returns whether a scan is still
     /// running. Called once per frame by the scan pump.
     pub fn pump(&self, budget: Duration) -> bool {
+        let rescanning = self.pump_rescan(budget);
+        self.pump_scan(budget) || rescanning
+    }
+
+    /// [`AppState::pump`] for the full scan.
+    fn pump_scan(&self, budget: Duration) -> bool {
         let poll = {
             let mut scan = self.inner.scan.borrow_mut();
             let Some(source) = scan.as_mut() else {
@@ -289,3 +308,5 @@ impl Default for AppState {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_edits;

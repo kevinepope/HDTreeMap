@@ -168,6 +168,22 @@ impl ScanErrors {
     pub fn is_empty(&self) -> bool {
         self.total == 0
     }
+
+    /// After a rescan of `folder`: drop the kept errors inside it and add `fresh` (the
+    /// rescan's errors). Errors past the kept list cannot be told apart by path, so the
+    /// total drops only by the kept ones removed.
+    pub fn replace_under(&mut self, folder: &Path, fresh: &ScanErrors) {
+        let before = self.entries.len();
+        self.entries.retain(|e| !e.path.starts_with(folder));
+        let removed = (before - self.entries.len()) as u64;
+        self.total = self.total.saturating_sub(removed);
+        for e in &fresh.entries {
+            self.record(&e.path, e.message.clone());
+        }
+        // Errors the rescan counted but did not keep.
+        let unlisted = fresh.total.saturating_sub(fresh.entries.len() as u64);
+        self.total = self.total.saturating_add(unlisted);
+    }
 }
 
 #[cfg(test)]
@@ -189,6 +205,22 @@ mod tests {
         p.cancel();
         p.mark_done();
         assert!(p.is_cancelled() && p.snapshot().done);
+    }
+
+    #[test]
+    fn a_rescan_replaces_the_errors_inside_its_folder() {
+        let mut errors = ScanErrors::default();
+        errors.record(Path::new("/r/a/x"), "denied");
+        errors.record(Path::new("/r/b/y"), "denied");
+        let mut fresh = ScanErrors::default();
+        fresh.record(Path::new("/r/a/z"), "gone");
+        errors.replace_under(Path::new("/r/a"), &fresh);
+        let paths: Vec<_> = errors.entries().iter().map(|e| e.path.clone()).collect();
+        assert_eq!(
+            paths,
+            vec![PathBuf::from("/r/b/y"), PathBuf::from("/r/a/z")]
+        );
+        assert_eq!(errors.total(), 2);
     }
 
     #[test]
