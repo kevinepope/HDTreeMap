@@ -15,8 +15,9 @@
 //!   to the zoom root (the default expansion); a new tree version (size mode) rebuilds the
 //!   rows with new sizes and order, keeping what was expanded.
 //!
-//! A `TreeView` has no select or scroll API and no change callbacks, so the wrapper reads
-//! and writes its public node list and scrolls it with a wheel event. The wrapper also takes
+//! The wrapper reads and writes the `TreeView`'s public node list and scrolls it with
+//! `scroll_node_into_view` (moving to the rest of its newer selection and event API is a
+//! separate step). The wrapper also takes
 //! the pointer and keyboard focus and forwards events to the `TreeView` (see
 //! `claims_pointer_exclusively`).
 
@@ -28,8 +29,8 @@ use std::sync::Arc;
 
 use agg_gui::event::current_click_count;
 use agg_gui::{
-    DrawCtx, Event, EventResult, HAnchor, Key, Modifiers, MouseButton, Point, Rect, Size, TreeView,
-    VAnchor, Widget, WidgetBase,
+    DrawCtx, Event, EventResult, HAnchor, Key, MouseButton, Point, Rect, ScrollAlign, Size,
+    TreeView, VAnchor, Widget, WidgetBase,
 };
 
 use crate::fonts::Fonts;
@@ -48,8 +49,6 @@ const FONT_SIZE: f64 = 13.0;
 /// Rows (`TreeView` nodes) past which collapsed folders' rows are dropped (or, when the open
 /// folders alone need more, that many plus two folders' worth).
 pub const PRUNE_AT: usize = 1500;
-/// Pixels one wheel notch scrolls a `TreeView` (its `MouseWheel` handler's step).
-const TREE_VIEW_WHEEL_STEP: f64 = 40.0;
 
 /// See the module docs.
 pub struct FolderTree {
@@ -177,11 +176,10 @@ impl FolderTree {
         (y >= 0.0 && y + ROW_HEIGHT <= self.bounds.height).then_some(rect)
     }
 
-    /// The bottom of the row at visible `position` (local, Y-up), from where the
-    /// `TreeView` placed its first row.
+    /// The bottom of the row at visible `position` (local, Y-up), at the `TreeView`'s
+    /// current scroll offset (its rows are virtualised: only those on screen are widgets).
     fn row_bottom(&self, position: usize) -> Option<f64> {
-        let first = self.view()?.children().first()?.bounds();
-        let offset = first.y + ROW_HEIGHT - self.bounds.height;
+        let offset = self.view()?.scroll_offset();
         Some(self.bounds.height - (position as f64 + 1.0) * ROW_HEIGHT + offset)
     }
 
@@ -435,32 +433,11 @@ impl FolderTree {
         self.scroll_to = row;
     }
 
-    /// Scroll the `TreeView` so row `idx` is in view (centred when it was out of view).
+    /// Scroll the `TreeView` so row `idx` is in view (centred when it was out of view), at
+    /// its next layout.
     fn scroll_into_view(&mut self, idx: usize) {
-        let height = self.bounds.height;
-        let Some(view) = self.view() else {
-            return;
-        };
-        let Some(position) = Rows::visible_position(&view.nodes, idx) else {
-            return;
-        };
-        let Some(bottom) = self.row_bottom(position) else {
-            return;
-        };
-        if bottom >= 0.0 && bottom + ROW_HEIGHT <= height {
-            return;
-        }
-        // Moving the row up by `shift` pixels needs the scroll offset to grow by `shift`;
-        // the TreeView's wheel handler subtracts `delta_y * step` from its offset.
-        let shift = (height - ROW_HEIGHT) / 2.0 - bottom;
-        let wheel = Event::MouseWheel {
-            pos: Point::new(1.0, 1.0),
-            delta_y: -shift / TREE_VIEW_WHEEL_STEP,
-            delta_x: 0.0,
-            modifiers: Modifiers::default(),
-        };
         if let Some(view) = self.view_mut() {
-            view.on_event(&wheel);
+            view.scroll_node_into_view(idx, ScrollAlign::Center);
         }
     }
 }
