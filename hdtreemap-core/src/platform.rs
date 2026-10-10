@@ -18,7 +18,7 @@ mod demo;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-pub use demo::DemoPlatform;
+pub use demo::{profile, DemoPlatform};
 
 /// One mounted volume as listed on the start screen.
 #[derive(Clone, Debug, PartialEq, Eq)]

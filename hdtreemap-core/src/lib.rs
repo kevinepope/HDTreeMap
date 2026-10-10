@@ -13,6 +13,7 @@
 //! - [`state`] — the shared app state (which screen, which scan target).
 //! - [`ui`] — the widget tree (start screen, target screen).
 
+pub mod demo_fs;
 pub mod fonts;
 pub mod format;
 pub mod model;
