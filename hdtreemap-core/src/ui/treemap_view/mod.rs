@@ -242,9 +242,33 @@ impl TreemapView {
         Rect::new(0.0, 0.0, self.bounds.width, self.bounds.height)
     }
 
-    /// Update the hover from a pointer at `pos` (local, Y-up).
+    /// Whether the cached layout shows the current zoom root and tree. Between a zoom (or a
+    /// tree edit) and the next paint it does not, and its rectangles name the wrong nodes.
+    fn layout_is_current(&self) -> bool {
+        self.cache.as_ref().is_some_and(|c| {
+            c.key.zoom_root == self.state.zoom_root()
+                && c.key.tree_version == self.state.tree_version()
+        })
+    }
+
+    /// Whether `node` is still in the tree (not removed by Move to Trash or a rescan).
+    fn is_live(&self, node: NodeId) -> bool {
+        self.state
+            .with_result(|r, _| r.tree.is_live(node))
+            .unwrap_or(false)
+    }
+
+    /// Update the hover from a pointer at `pos` (local, Y-up). With a stale layout nothing
+    /// is hovered until the next paint lays out again (which re-hit-tests the pointer).
     fn hover_at(&mut self, pos: Point) {
         self.pointer = Some(pos);
+        if !self.layout_is_current() {
+            if self.hover_index.take().is_some() {
+                self.base.tooltip = None;
+            }
+            agg_gui::animation::request_draw();
+            return;
+        }
         let index = self
             .to_map(pos)
             .and_then(|(x, y)| self.cache.as_ref()?.layout.hit(x, y));
@@ -293,6 +317,11 @@ impl TreemapView {
 
     fn press(&mut self, pos: Point) {
         self.hover_at(pos);
+        if !self.layout_is_current() {
+            // The map under the pointer is about to change; a press on the old one is
+            // dropped rather than acting on a node the user no longer sees.
+            return;
+        }
         let Some(index) = self.hover_index else {
             self.state.set_selected(None);
             return;
@@ -327,7 +356,7 @@ impl TreemapView {
 
     /// The selection's rectangle in the current layout.
     fn selected_rect(&mut self) -> Option<PxRect> {
-        let selected = self.state.selected()?;
+        let selected = self.state.selected().filter(|&n| self.is_live(n))?;
         let mut slot = self.selected_index;
         let index = self.locate(&mut slot, selected);
         self.selected_index = slot;
@@ -338,7 +367,7 @@ impl TreemapView {
     /// The rectangle to outline as hovered: the one under this widget's pointer, or the one
     /// showing what another view (the folder tree) hovers.
     fn shown_hover_index(&mut self) -> Option<usize> {
-        let hover = self.state.hovered()?;
+        let hover = self.state.hovered().filter(|h| self.is_live(h.node))?;
         if let Some(own) = self.hover_index {
             if self.hover_for(own) == Some(hover) {
                 return Some(own);

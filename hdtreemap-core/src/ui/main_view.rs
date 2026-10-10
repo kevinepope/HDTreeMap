@@ -255,6 +255,10 @@ fn item_line(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
                     aggregate: None,
                 })
             })?;
+            // A removed node (moved to the trash, replaced by a rescan) is not described.
+            if !r.tree.is_live(hover.node) {
+                return None;
+            }
             Some(describe::status_line(&r.tree, hover))
         })
         .flatten()

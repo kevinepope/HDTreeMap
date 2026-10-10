@@ -310,3 +310,56 @@ fn the_tooltip_is_multi_line_and_keyed_on_the_hovered_rectangle() {
     h.move_to(1.0, 1.0);
     assert_eq!(key_and_tip(&h).0, None);
 }
+
+#[test]
+fn input_before_the_next_paint_never_uses_a_stale_layout() {
+    let mut h = usb_map();
+    let (x, y) = find_point(&mut h, nested_file);
+    let hovered = h.state.hovered().expect("hovered").node;
+    // Zoom into another top-level folder; no frame runs, so the widget still holds the
+    // layout of the scan root under the pointer.
+    let other = h
+        .state
+        .with_result(|r, _| {
+            let tree = &r.tree;
+            let top = tree
+                .ancestors(hovered)
+                .find(|&a| tree.node(a).is_some_and(|n| n.parent() == tree.root()))
+                .unwrap_or(hovered);
+            tree.children(tree.root())
+                .find(|&c| c != top && tree.node(c).is_some_and(|n| n.is_dir()))
+        })
+        .flatten()
+        .expect("a second top-level folder");
+    assert!(h.state.set_zoom_root(other));
+    let under_zoom = |state: &AppState, node: NodeId| {
+        state
+            .with_result(|r, _| node == other || r.tree.ancestors(node).any(|a| a == other))
+            .unwrap_or(false)
+    };
+    h.app.on_mouse_move(x + 1.0, y);
+    if let Some(hover) = h.state.hovered() {
+        assert!(
+            under_zoom(&h.state, hover.node),
+            "hovered from the old layout"
+        );
+    }
+    h.app
+        .on_mouse_down(x, y, MouseButton::Left, Modifiers::default());
+    h.app
+        .on_mouse_up(x, y, MouseButton::Left, Modifiers::default());
+    if let Some(selected) = h.state.selected() {
+        assert!(
+            under_zoom(&h.state, selected),
+            "selected from the old layout"
+        );
+    }
+    // After the next frame the new layout answers.
+    h.frame();
+    h.move_to(x, y);
+    let hover = h
+        .state
+        .hovered()
+        .expect("the zoomed map is under the pointer");
+    assert!(under_zoom(&h.state, hover.node));
+}
