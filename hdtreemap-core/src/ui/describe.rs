@@ -23,6 +23,10 @@ pub fn display_path(tree: &Tree, node: NodeId) -> String {
     tree.path(node).to_string_lossy().into_owned()
 }
 
+/// Between the tooltip's parts. One line: agg-gui's central tooltip (the one
+/// `WidgetBase::tooltip` feeds) draws its text as a single line.
+const SEP: &str = " \u{b7} ";
+
 /// The hover tooltip: name, size and share of the zoom root, file count for folders, and
 /// the full path.
 pub fn tooltip(tree: &Tree, zoom_root: NodeId, hover: Hover) -> String {
@@ -34,7 +38,7 @@ pub fn tooltip(tree: &Tree, zoom_root: NodeId, hover: Hover) -> String {
     };
     match hover.aggregate {
         Some(info) => format!(
-            "{}\n{} \u{b7} {} of {}\nin {}",
+            "{} \u{b7} {} \u{b7} {} of {} \u{b7} in {}",
             small_items_phrase(info),
             format_bytes(info.bytes),
             format_percent(info.bytes, whole),
@@ -45,17 +49,17 @@ pub fn tooltip(tree: &Tree, zoom_root: NodeId, hover: Hover) -> String {
             let node = hover.node;
             let size = tree.size(node);
             let mut text = format!(
-                "{}\n{} \u{b7} {} of {}",
+                "{} \u{b7} {} \u{b7} {} of {}",
                 tree.name(node),
                 format_bytes(size),
                 format_percent(size, whole),
                 zoom_name
             );
             if let Some(n) = tree.node(node).filter(|n| n.is_dir()) {
-                text.push('\n');
+                text.push_str(SEP);
                 text.push_str(&files_phrase(u64::from(n.file_count())));
             }
-            text.push('\n');
+            text.push_str(SEP);
             text.push_str(&display_path(tree, node));
             text
         }
@@ -112,7 +116,7 @@ mod tests {
         );
         assert_eq!(
             file,
-            "a.pdf\n3.0 KB \u{b7} 75.0% of /scan\n/scan/docs/a.pdf"
+            "a.pdf \u{b7} 3.0 KB \u{b7} 75.0% of /scan \u{b7} /scan/docs/a.pdf"
         );
         let dir = tooltip(
             &tree,
@@ -124,7 +128,7 @@ mod tests {
         );
         assert_eq!(
             dir,
-            "docs\n3.0 KB \u{b7} 100.0% of docs\n1 file\n/scan/docs"
+            "docs \u{b7} 3.0 KB \u{b7} 100.0% of docs \u{b7} 1 file \u{b7} /scan/docs"
         );
         let agg = Hover {
             node: docs,
@@ -135,7 +139,7 @@ mod tests {
         };
         assert_eq!(
             tooltip(&tree, tree.root(), agg),
-            "12 small items\n2.0 KB \u{b7} 50.0% of /scan\nin /scan/docs"
+            "12 small items \u{b7} 2.0 KB \u{b7} 50.0% of /scan \u{b7} in /scan/docs"
         );
     }
 
