@@ -13,6 +13,7 @@
 //! - [`layout`] — the squarified, cushioned treemap layout (pure geometry, hit testing).
 //! - [`model`] — the scanned tree (arena of nodes), size modes, extension table.
 //! - [`platform`] — the `PlatformServices` contract, volume-list cleanup, the demo platform.
+//! - [`render`] — the treemap's palette and cushion rasteriser.
 //! - [`scan`] — `ScanSource`, live progress, and the native `FsScanner`.
 //! - [`state`] — the shared app state (screen, running scan, finished result) and the scan pump.
 //! - [`ui`] — the widget tree (start, scan and results screens).
@@ -23,6 +24,7 @@ pub mod format;
 pub mod layout;
 pub mod model;
 pub mod platform;
+pub mod render;
 pub mod scan;
 pub mod state;
 pub mod ui;

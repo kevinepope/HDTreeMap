@@ -1435,6 +1435,7 @@ version = "0.1.0"
 dependencies = [
  "agg-gui",
  "jwalk",
+ "rayon",
  "tempfile",
  "web-time",
  "windows-sys 0.61.2",
