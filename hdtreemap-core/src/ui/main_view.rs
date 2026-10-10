@@ -33,7 +33,7 @@ use super::treemap_view::{TreemapView, TREEMAP_ID};
 use crate::fonts::{fa, Fonts};
 use crate::format::{format_bytes, format_count};
 use crate::model::SizeMode;
-use crate::platform::{volume_containing, PlatformServices};
+use crate::platform::PlatformServices;
 use crate::render::Shading;
 use crate::state::{AppState, ScanTarget};
 
@@ -224,16 +224,17 @@ fn status_bar(
     if let Some(errors) = errors_note(state, platform, fonts) {
         row = row.add(errors);
     }
-    let free = target.free_bytes.or_else(|| {
-        volume_containing(&platform.list_volumes(), &target.path).map(|v| v.free_bytes)
-    });
-    if let Some(free) = free {
-        row = row.add(status_label(
-            format!("{} free", format_bytes(free)),
-            fonts,
-            STATUS_FREE_ID,
-        ));
-    }
+    let free_state = state.clone();
+    let free_version = state.clone();
+    let free_target = target.clone();
+    let free_fonts = fonts.clone();
+    row = row.add(Box::new(
+        Rebuilder::new(
+            move || free_version.volumes_version(),
+            move || free_note(&free_state, &free_target, &free_fonts),
+        )
+        .with_v_anchor(VAnchor::CENTER),
+    ));
     let visuals = current_visuals();
     Box::new(
         Container::new()
@@ -243,6 +244,25 @@ fn status_bar(
             .with_h_anchor(HAnchor::STRETCH)
             .add(Box::new(row)),
     )
+}
+
+/// `"12.3 GB free"` on the scanned volume: the chosen volume's figure, else the cached
+/// volume list's (never listed here: that can hang on a dead network mount). Nothing
+/// while unknown.
+fn free_note(state: &AppState, target: &ScanTarget, fonts: &Fonts) -> Box<dyn Widget> {
+    let root = state.with_result(|r, _| r.root.clone());
+    let free = target.free_bytes.or_else(|| {
+        let path = root.as_deref().unwrap_or(&target.path);
+        state.free_space_for(path)
+    });
+    match free {
+        Some(free) => status_label(
+            format!("{} free", format_bytes(free)),
+            fonts,
+            STATUS_FREE_ID,
+        ),
+        None => Box::new(agg_gui::Spacer::new().with_max_size(agg_gui::Size::new(0.0, 0.0))),
+    }
 }
 
 /// The hovered item, else the selected one, else a hint.

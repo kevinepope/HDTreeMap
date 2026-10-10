@@ -22,6 +22,7 @@ use hdtreemap_core::platform::{
 };
 use hdtreemap_core::scan::{FsScanner, ScanSource};
 use hdtreemap_core::state::ScanTarget;
+use hdtreemap_core::AppState;
 use sysinfo::Disks;
 
 /// The real machine.
@@ -119,6 +120,24 @@ fn mount_entries() -> Vec<MountEntry> {
         }
     }
     Vec::new()
+}
+
+/// List the volumes on a worker thread and hand them to `state` when done (waking the UI),
+/// so the results view can show free space without listing them on the UI thread, where a
+/// dead network mount could hang it.
+pub fn list_volumes_in_background(state: &AppState) {
+    let queue = agg_gui::ui_thread::current_queue();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("hdtreemap-volumes".into())
+        .spawn(move || {
+            // The receiver is gone only when the app has quit.
+            let _ = tx.send(NativePlatform.list_volumes());
+            queue.signal_async_state_change();
+        });
+    if spawned.is_ok() {
+        state.receive_volumes(rx);
+    }
 }
 
 fn reveal_error(path: &Path, err: impl std::fmt::Display) -> PlatformError {

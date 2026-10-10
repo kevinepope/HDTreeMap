@@ -110,3 +110,33 @@ fn the_main_view_survives_small_windows() {
     h.resize(800.0, 600.0);
     assert!(h.visible(TREEMAP_ID));
 }
+
+#[test]
+fn the_results_view_never_lists_volumes_itself() {
+    // Listing volumes can hang on a dead network mount, so the results view only reads
+    // a list the start screen or a background lookup already made.
+    let (platform, _) = common::fake(Vec::new(), None);
+    let calls = Rc::clone(&platform.calls);
+    let state = common::scanning_state("/somewhere");
+    let mut h = Harness::with_state(state, Rc::new(platform));
+    wait_for_results(&mut h);
+    assert!(
+        !calls.borrow().iter().any(|c| c == "list_volumes"),
+        "{:?}",
+        calls.borrow()
+    );
+    assert!(!h.visible(STATUS_FREE_ID), "no free space known yet");
+
+    // A background lookup delivers the list; the status bar picks it up.
+    let (tx, rx) = std::sync::mpsc::channel();
+    h.state.receive_volumes(rx);
+    tx.send(vec![common::volume(
+        "Demo",
+        "/demo",
+        100 * common::GB,
+        7 * common::GB,
+    )])
+    .expect("send");
+    h.frame();
+    assert_eq!(h.label_text(STATUS_FREE_ID), "7.0 GB free");
+}

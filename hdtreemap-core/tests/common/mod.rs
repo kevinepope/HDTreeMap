@@ -6,14 +6,16 @@
 
 #![allow(dead_code)]
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use agg_gui::widget::{find_widget_by_id, find_widget_screen_rect};
 use agg_gui::{App, Framebuffer, GfxCtx, Key, Label, Modifiers, MouseButton, Rect, Size};
 use hdtreemap_core::demo_fs::{DemoPace, DemoProfile, DemoScanner};
-use hdtreemap_core::platform::{ActionOutcome, ActionResult, PlatformServices, VolumeInfo};
+use hdtreemap_core::platform::{
+    ActionOutcome, ActionResult, PlatformError, PlatformServices, VolumeInfo,
+};
 use hdtreemap_core::scan::ScanSource;
 use hdtreemap_core::state::ScanTarget;
 use hdtreemap_core::{build_app, install_theme_and_fonts, AppState};
@@ -22,36 +24,55 @@ pub const WIDTH: f64 = 1200.0;
 pub const HEIGHT: f64 = 800.0;
 pub const GB: u64 = 1024 * 1024 * 1024;
 
-/// A scripted machine: fixed volumes, a folder picker that answers `picked`, and scans that
-/// stream the small demo USB stick at its realistic pace (about 1.5 s).
+/// A scripted machine: fixed volumes, a folder picker that answers `picked`, scans that
+/// stream the small demo USB stick at its realistic pace (about 1.5 s), and OS actions that
+/// are recorded in `calls` (`"reveal /path"`, `"open /path"`, `"trash /path"`,
+/// `"list_volumes"`) and succeed unless `trash_error` is set.
 pub struct FakePlatform {
     pub volumes: Vec<VolumeInfo>,
     pub picked: Option<PathBuf>,
     pub pick_calls: Rc<Cell<u32>>,
+    pub calls: Rc<RefCell<Vec<String>>>,
+    pub trash_error: Option<String>,
+    pub pace: DemoPace,
+}
+
+impl FakePlatform {
+    fn record(&self, call: String) {
+        self.calls.borrow_mut().push(call);
+    }
 }
 
 impl PlatformServices for FakePlatform {
     fn list_volumes(&self) -> Vec<VolumeInfo> {
+        self.record("list_volumes".to_string());
         self.volumes.clone()
     }
     fn pick_folder(&self) -> Option<PathBuf> {
         self.pick_calls.set(self.pick_calls.get() + 1);
         self.picked.clone()
     }
-    fn reveal(&self, _path: &Path) -> ActionResult {
+    fn reveal(&self, path: &Path) -> ActionResult {
+        self.record(format!("reveal {}", path.display()));
         Ok(ActionOutcome::Done)
     }
-    fn open(&self, _path: &Path) -> ActionResult {
+    fn open(&self, path: &Path) -> ActionResult {
+        self.record(format!("open {}", path.display()));
         Ok(ActionOutcome::Done)
     }
-    fn trash(&self, _path: &Path) -> ActionResult {
-        Ok(ActionOutcome::Done)
+    fn trash(&self, path: &Path) -> ActionResult {
+        self.record(format!("trash {}", path.display()));
+        match &self.trash_error {
+            Some(message) => Err(PlatformError::new(message.clone())),
+            None => Ok(ActionOutcome::Done),
+        }
     }
     fn is_demo(&self) -> bool {
         false
     }
-    fn scan_source(&self, _target: &ScanTarget) -> Box<dyn ScanSource> {
-        Box::new(DemoScanner::new(DemoProfile::UsbStick, DemoPace::Realistic))
+    fn scan_source(&self, target: &ScanTarget) -> Box<dyn ScanSource> {
+        self.record(format!("scan {}", target.path.display()));
+        Box::new(DemoScanner::new(DemoProfile::UsbStick, self.pace))
     }
 }
 
@@ -72,6 +93,9 @@ pub fn fake(volumes: Vec<VolumeInfo>, picked: Option<&str>) -> (FakePlatform, Rc
         volumes,
         picked: picked.map(PathBuf::from),
         pick_calls: Rc::clone(&calls),
+        calls: Rc::new(RefCell::new(Vec::new())),
+        trash_error: None,
+        pace: DemoPace::Realistic,
     };
     (platform, calls)
 }

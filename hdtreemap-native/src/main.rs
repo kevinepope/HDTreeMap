@@ -103,6 +103,10 @@ fn run_app(
         let state = AppState::new();
         state.highlight_on_finish(highlight);
         if let Some(target) = target {
+            if !platform.is_demo() {
+                // No start screen lists the volumes first: look them up off the UI thread.
+                platform::list_volumes_in_background(&state);
+            }
             let source = platform.scan_source(&target);
             state.start_scan(target, source);
         }

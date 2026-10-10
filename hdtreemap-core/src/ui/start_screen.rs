@@ -66,6 +66,8 @@ pub fn build(
 ) -> Box<dyn Widget> {
     let demo = platform.is_demo();
     let volumes = platform.list_volumes();
+    // Kept for the results view's free-space note, which must not list them again.
+    state.set_volumes(volumes.clone());
     let mut column = FlexColumn::new()
         .with_panel_bg()
         .with_top_anchor(true)

@@ -16,11 +16,13 @@
 //! What the treemap shows of the finished scan (zoom root, hover, selection, highlighted
 //! extension, shading) and the finer-grained versions its widgets watch are in
 //! `state/view.rs`; the palette and the zoom root's extension table, cached for every view
-//! to share, in `state/derived.rs`.
+//! to share, in `state/derived.rs`; the last volume list (for free space) in
+//! `state/volumes.rs`.
 
 mod derived;
 mod pump;
 mod view;
+mod volumes;
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -109,6 +111,7 @@ struct Inner {
     last_progress: Cell<Option<Instant>>,
     finished: RefCell<Option<Finished>>,
     view: view::ViewState,
+    volumes: volumes::VolumeCache,
 }
 
 /// Everything the UI reads and writes. Cheap to clone; clones share the same state.
@@ -129,6 +132,7 @@ impl AppState {
                 last_progress: Cell::new(None),
                 finished: RefCell::new(None),
                 view: view::ViewState::new(),
+                volumes: volumes::VolumeCache::default(),
             }),
         }
     }
