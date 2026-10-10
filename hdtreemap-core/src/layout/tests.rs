@@ -379,3 +379,39 @@ fn hits_and_lookups_agree_on_known_files() {
     }
     assert_eq!(map.index_of(tree.root()), Some(0));
 }
+
+#[test]
+fn nearest_lookup_falls_back_to_the_closest_laid_out_folder() {
+    let mut b = TreeBuilder::new("/r");
+    let root = b.root();
+    let big = file(&mut b, root, "big.bin", 1_000_000);
+    let many = b.add_dir(root, "many");
+    file(&mut b, many, "medium.bin", 50_000);
+    let tiny = file(&mut b, many, "tiny.txt", 10);
+    let other = b.add_dir(root, "other");
+    let elsewhere = file(&mut b, other, "x.bin", 40_000);
+    let tree = b.finish(SizeMode::Allocated);
+    let map = layout(
+        &tree,
+        root,
+        PxRect::new(0.0, 0.0, 100.0, 100.0),
+        &LayoutParams::default(),
+    );
+    // A laid-out file is found itself, as by `index_of`.
+    assert_eq!(map.index_of_nearest(&tree, big), map.index_of(big));
+    assert!(map.index_of(tiny).is_none(), "merged into an aggregate");
+    let at = map.index_of_nearest(&tree, tiny).expect("its folder");
+    assert_eq!(map.rects()[at].node, many);
+    assert_ne!(map.rects()[at].kind, RectKind::Aggregate);
+    assert_eq!(map.index_of_nearest(&tree, root), Some(0));
+    // Zoomed into `many`, a node outside it has no rectangle.
+    let zoomed = layout(
+        &tree,
+        many,
+        PxRect::new(0.0, 0.0, 100.0, 100.0),
+        &LayoutParams::default(),
+    );
+    assert_eq!(zoomed.index_of_nearest(&tree, elsewhere), None);
+    assert_eq!(zoomed.index_of_nearest(&tree, root), None);
+    assert_eq!(zoomed.index_of_nearest(&tree, many), Some(0));
+}

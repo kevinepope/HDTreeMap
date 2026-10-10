@@ -235,6 +235,39 @@ impl TreemapLayout {
             .iter()
             .position(|r| r.node == node && r.kind != RectKind::Aggregate)
     }
+
+    /// The rectangle showing `node`, or else its nearest ancestor that has one (a file
+    /// merged into an aggregate shows as its folder). `None` when `node` is not below the
+    /// layout's root. One pass over the rectangles.
+    pub fn index_of_nearest(&self, tree: &Tree, node: NodeId) -> Option<usize> {
+        let mut chain = vec![node];
+        if node != self.root {
+            for a in tree.ancestors(node) {
+                chain.push(a);
+                if a == self.root {
+                    break;
+                }
+            }
+            if chain.last() != Some(&self.root) {
+                return None;
+            }
+        }
+        let mut best: Option<(usize, usize)> = None;
+        for (index, r) in self.rects.iter().enumerate() {
+            if r.kind == RectKind::Aggregate {
+                continue;
+            }
+            if let Some(level) = chain.iter().position(|&c| c == r.node) {
+                if best.is_none_or(|(l, _)| level < l) {
+                    best = Some((level, index));
+                    if level == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+        best.map(|(_, index)| index)
+    }
 }
 
 /// Lay out the subtree of `root` (by the tree's active size mode) into `bounds`.
