@@ -1,8 +1,10 @@
 //! The treemap's colours (`docs/PLAN.md` §3.4): one of [`HUES`] for each of the extensions
 //! using the most space, neutral grey for every other file, and a darker grey for blocks
 //! that stand for several items (aggregates and folders too small to open), the WinDirStat
-//! scheme. Built from the scan's [`ExtTable`]; the extension legend (M3) reads the same
-//! assignments through [`Palette::assigned`].
+//! scheme. Built from the scan's [`ExtTable`] once per tree (`AppState::palette`); the
+//! extension legend's swatches read the same colours through [`Palette::ext_color`].
+//! [`Palette::highlighting`] derives the palette of the extension highlight: every colour
+//! dimmed but the chosen extension's.
 
 use crate::layout::{LayoutRect, RectKind};
 use crate::model::{ExtTable, SizeMode, Tree};
@@ -39,13 +41,35 @@ const fn rgb(r: u8, g: u8, b: u8) -> Rgb {
     [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]
 }
 
+/// Share of its brightness a colour keeps when another extension is highlighted.
+pub const DIMMED: f32 = 0.22;
+
 /// Colour per extension id. See the module docs.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Palette {
-    /// Indexed by extension id; `None` = [`OTHER_FILES`].
+    /// Indexed by extension id; `None` = `other`.
     by_ext: Vec<Option<Rgb>>,
     /// `(extension id, colour)` in hue order.
     assigned: Vec<(u16, Rgb)>,
+    /// Files whose extension has no colour of its own ([`OTHER_FILES`]).
+    other: Rgb,
+    /// Aggregates and folder blocks ([`FOLDER_BLOCK`]).
+    block: Rgb,
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Self {
+            by_ext: Vec::new(),
+            assigned: Vec::new(),
+            other: OTHER_FILES,
+            block: FOLDER_BLOCK,
+        }
+    }
+}
+
+fn dim(c: Rgb) -> Rgb {
+    c.map(|v| v * DIMMED)
 }
 
 impl Palette {
@@ -71,7 +95,32 @@ impl Palette {
                 assigned.push((row.ext, hue));
             }
         }
-        Self { by_ext, assigned }
+        Self {
+            by_ext,
+            assigned,
+            ..Self::default()
+        }
+    }
+
+    /// This palette with every colour dimmed except that of extension id `ext` (the
+    /// extension legend's highlight). `ext_count` is the tree's number of extension ids.
+    pub fn highlighting(&self, ext: u16, ext_count: usize) -> Self {
+        let by_ext = (0..ext_count.max(self.by_ext.len()))
+            .map(|e| {
+                let color = self.ext_color(e as u16);
+                Some(if e == usize::from(ext) {
+                    color
+                } else {
+                    dim(color)
+                })
+            })
+            .collect();
+        Self {
+            by_ext,
+            assigned: self.assigned.clone(),
+            other: dim(self.other),
+            block: dim(self.block),
+        }
     }
 
     /// The colour of files with extension id `ext`.
@@ -80,7 +129,7 @@ impl Palette {
             .get(usize::from(ext))
             .copied()
             .flatten()
-            .unwrap_or(OTHER_FILES)
+            .unwrap_or(self.other)
     }
 
     /// The extensions that have a hue, biggest first.
@@ -93,8 +142,8 @@ impl Palette {
         match rect.kind {
             RectKind::File => tree
                 .node(rect.node)
-                .map_or(OTHER_FILES, |n| self.ext_color(n.ext())),
-            RectKind::Dir | RectKind::FolderBlock | RectKind::Aggregate => FOLDER_BLOCK,
+                .map_or(self.other, |n| self.ext_color(n.ext())),
+            RectKind::Dir | RectKind::FolderBlock | RectKind::Aggregate => self.block,
         }
     }
 }

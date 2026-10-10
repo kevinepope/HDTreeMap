@@ -193,3 +193,30 @@ fn the_light_comes_from_the_upper_left_front() {
     // Facing away from the light leaves only the ambient term.
     assert!((cushion_intensity(-1e6, -1e6) - AMBIENT).abs() < 1e-3);
 }
+
+#[test]
+fn the_highlight_palette_dims_everything_but_one_extension() {
+    let (tree, palette, map) = fixture();
+    let jpg = (0..tree.ext_count() as u16)
+        .find(|&e| tree.ext_name(e) == "jpg")
+        .expect("jpg");
+    let lit = palette.highlighting(jpg, tree.ext_count());
+    assert_eq!(lit.ext_color(jpg), palette.ext_color(jpg));
+    for e in (0..tree.ext_count() as u16).filter(|&e| e != jpg) {
+        let (a, b) = (lit.ext_color(e), palette.ext_color(e));
+        assert!(a.iter().zip(b).all(|(x, y)| *x < y * 0.5), "ext {e} dimmed");
+    }
+    // Rasterised: the jpg files keep their pixels, everything else is darker.
+    let base = rasterise(&map, &tree, &palette, Shading::Cushion, W, H);
+    let dimmed = rasterise(&map, &tree, &lit, Shading::Cushion, W, H);
+    for r in painted(&map) {
+        let (x, y) = at(r, 0.5, 0.5);
+        let is_jpg = r.kind == RectKind::File && tree.node(r.node).is_some_and(|n| n.ext() == jpg);
+        let (b, d) = (pixel(&base, x, y), pixel(&dimmed, x, y));
+        if is_jpg {
+            assert_eq!(b, d);
+        } else {
+            assert!(luma(d) * 2 < luma(b), "{:?} is dimmed", r.node);
+        }
+    }
+}
