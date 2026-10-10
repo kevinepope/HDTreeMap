@@ -20,7 +20,7 @@ use web_time::Instant;
 
 pub use engine::{Entry, Expand, Generator};
 
-use crate::model::{SizeMode, Tree};
+use crate::model::{ExtTable, SizeMode, Tree};
 use crate::platform::{profile, DemoPlatform, PlatformServices};
 use crate::scan::{PartialScan, ScanPoll, ScanProgress, ScanResult, ScanSource};
 
@@ -208,6 +208,19 @@ impl DemoScanner {
         })
     }
 
+    /// Generated: sort the tree until `deadline` (the rest in later polls), then hand it
+    /// over.
+    fn poll_sort(&mut self, deadline: Option<Instant>) -> ScanPoll {
+        if !self.generator.sort_some(deadline) {
+            return ScanPoll::Running;
+        }
+        self.finished = true;
+        match self.take_result() {
+            Some(result) => ScanPoll::Finished(Box::new(result)),
+            None => ScanPoll::Running,
+        }
+    }
+
     /// Generate everything now and return the result (`None` if it was already taken).
     pub fn run_to_end(&mut self) -> Option<ScanResult> {
         while !self.step(u64::MAX) {}
@@ -226,6 +239,9 @@ impl ScanSource for DemoScanner {
             return ScanPoll::Running;
         }
         let deadline = Instant::now().checked_add(budget);
+        if self.generator.is_done() {
+            return self.poll_sort(deadline);
+        }
         loop {
             let allowed = match self.rate {
                 Some(rate) => {
@@ -238,11 +254,8 @@ impl ScanSource for DemoScanner {
                 return ScanPoll::Running;
             }
             if self.step(allowed) {
-                self.finished = true;
-                return match self.take_result() {
-                    Some(result) => ScanPoll::Finished(Box::new(result)),
-                    None => ScanPoll::Running,
-                };
+                // Sorting starts in this poll's time, and goes on in the next ones.
+                return self.poll_sort(deadline);
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
                 return ScanPoll::Running;
@@ -256,6 +269,10 @@ impl ScanSource for DemoScanner {
             tree: self.generator.tree()?,
             errors: self.generator.errors(),
         })
+    }
+
+    fn partial_extensions(&self) -> Option<ExtTable> {
+        self.generator.extensions()
     }
 
     fn set_size_mode(&mut self, mode: SizeMode) {

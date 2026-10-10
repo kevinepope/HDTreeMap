@@ -7,7 +7,8 @@
 //! thread, once a frame) applies whatever has arrived within its time budget, so the UI
 //! owns the growing tree: the live map lays out the partial tree directly, with no locks
 //! and no copies ([`ScanSource::partial`]). When the walk is done and every batch applied,
-//! the poll sorts the tree and hands back the [`ScanResult`].
+//! the polls sort the tree, a time slice each (a million-file tree takes about 100 ms),
+//! and then hand back the [`ScanResult`].
 //!
 //! [`scan_blocking`] runs the same walk and assembly on the calling thread, for
 //! `--dump-top` and the tests. Dropping an `FsScanner` cancels its walk.
@@ -24,7 +25,7 @@ use super::assemble::{failed_result, root_file_name, Assembler, Record};
 use super::fs_meta;
 use super::walk::walk;
 use super::{PartialScan, ScanPoll, ScanProgress, ScanResult, ScanSource};
-use crate::model::{SizeMode, NAME_SLAB_LIMIT};
+use crate::model::{ExtTable, SizeMode, NAME_SLAB_LIMIT};
 
 /// Most records per batch sent to the polling thread.
 pub const BATCH_RECORDS: usize = 4096;
@@ -48,6 +49,8 @@ pub struct FsScanner {
     assembler: Option<Box<Assembler>>,
     /// The size mode to sort by (chosen before the assembler arrived, or since).
     mode: SizeMode,
+    /// The walk ended (or the tree filled up): only sorting is left.
+    walked: bool,
     finished: bool,
 }
 
@@ -78,11 +81,22 @@ impl FsScanner {
             root,
             assembler: None,
             mode: SizeMode::Allocated,
+            walked: false,
             finished: false,
         }
     }
 
-    /// Sort the tree and hand it over (once).
+    /// Sort the tree until `deadline`; once it is sorted, hand it over.
+    fn sort_then_finish(&mut self, deadline: Option<Instant>) -> ScanPoll {
+        if let Some(assembler) = self.assembler.as_mut() {
+            if !assembler.sort_some(deadline) {
+                return ScanPoll::Running;
+            }
+        }
+        self.finish()
+    }
+
+    /// Hand the (sorted) tree over (once).
     fn finish(&mut self) -> ScanPoll {
         self.finished = true;
         let result = match self.assembler.take() {
@@ -149,6 +163,9 @@ impl ScanSource for FsScanner {
             return ScanPoll::Running;
         }
         let deadline = Instant::now().checked_add(budget);
+        if self.walked {
+            return self.sort_then_finish(deadline);
+        }
         loop {
             match self.messages.try_recv() {
                 Ok(Message::Start(mut assembler)) => {
@@ -163,11 +180,15 @@ impl ScanSource for FsScanner {
                         if !assembler.apply(record) {
                             // The tree is full: stop the walk and show what fitted.
                             self.progress.cancel();
-                            return self.finish();
+                            self.walked = true;
+                            return self.sort_then_finish(deadline);
                         }
                     }
                 }
-                Ok(Message::Done) | Err(TryRecvError::Disconnected) => return self.finish(),
+                Ok(Message::Done) | Err(TryRecvError::Disconnected) => {
+                    self.walked = true;
+                    return self.sort_then_finish(deadline);
+                }
                 Err(TryRecvError::Empty) => return ScanPoll::Running,
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
@@ -183,6 +204,10 @@ impl ScanSource for FsScanner {
             tree: assembler.tree(),
             errors: assembler.errors(),
         })
+    }
+
+    fn partial_extensions(&self) -> Option<ExtTable> {
+        self.assembler.as_ref().map(|a| a.extensions())
     }
 
     fn set_size_mode(&mut self, mode: SizeMode) {

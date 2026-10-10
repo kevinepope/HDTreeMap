@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::{ScanErrors, ScanProgress, ScanResult};
-use crate::model::{NodeFlags, NodeId, SizeMode, Sizes, Tree, TreeBuilder};
+use web_time::Instant;
+
+use crate::model::{ExtTable, NodeFlags, NodeId, SizeMode, Sizes, Tree, TreeBuilder};
 
 /// What the error list says when the tree is full.
 pub(super) const FULL_MESSAGE: &str = "The scan stopped: too many files to hold their names \
@@ -114,6 +116,16 @@ impl Assembler {
         &self.root
     }
 
+    /// Totals per extension so far (kept as records are applied).
+    pub fn extensions(&self) -> ExtTable {
+        self.builder.extensions()
+    }
+
+    /// Sort the tree's child lists until done (true) or `deadline` (false; call again).
+    pub fn sort_some(&mut self, deadline: Option<Instant>) -> bool {
+        self.builder.sort_some(deadline)
+    }
+
     /// The size the finished tree is sorted by (and the partial tree reads).
     pub fn set_size_mode(&mut self, mode: SizeMode) {
         self.builder.set_size_mode(mode);
@@ -192,13 +204,13 @@ impl Assembler {
             .unwrap_or_else(|| self.builder.root())
     }
 
-    /// Sort the tree and hand over the result; `progress` is marked done.
+    /// Sort the rest of the tree (see [`Assembler::sort_some`]) and hand over the
+    /// result; `progress` is marked done.
     pub fn finish(self) -> ScanResult {
         self.progress.mark_done();
-        let mode = self.builder.size_mode();
         ScanResult {
             root: self.root,
-            tree: self.builder.finish(mode),
+            tree: self.builder.finish_sorted(),
             errors: self.errors,
             elapsed: self.progress.elapsed(),
         }

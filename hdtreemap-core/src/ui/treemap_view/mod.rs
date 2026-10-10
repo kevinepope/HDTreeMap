@@ -8,7 +8,9 @@
 //! the physical size (window size × DPI scale), the zoom root or the tree (new scan, size
 //! mode) changes, and rasterises again only then or when the shading or the palette (the
 //! colour scheme) changes. Hover, selection and the folder outline are vector strokes
-//! drawn over the image, so moving the mouse never re-rasterises.
+//! drawn over the image, so moving the mouse never re-rasterises. While a scan runs, a
+//! live tick's new layout is rasterised on the following frame (the old picture stays up
+//! one frame longer), so layout and raster never land in the same frame.
 //!
 //! Coordinates: agg-gui hands the widget Y-up logical points; the layout and raster are in
 //! Y-down physical pixels, capped in total (`geometry.rs`). `to_map` / `rect_to_local`
@@ -46,7 +48,7 @@ use agg_gui::{
 
 use super::describe;
 use crate::layout::{layout, LayoutParams, PxRect, RectKind, TreemapLayout};
-use crate::model::NodeId;
+use crate::model::{NodeId, Tree};
 use crate::render::{rasterise, stats_enabled, Palette, Shading};
 use crate::state::{AppState, Hover};
 use highlight::Highlight;
@@ -106,6 +108,8 @@ pub struct TreemapView {
     linked_hover_index: Located,
     /// The highlighted extension's files in the current layout.
     highlight: Highlight,
+    /// A live tick's layout, rasterised (and shown) on the next frame.
+    pending: Option<(LayoutKey, TreemapLayout)>,
     /// This widget's (0, 0) in root coordinates (logical, Y up), from the last paint: where
     /// a right click's context menu opens.
     origin: Point,
@@ -127,6 +131,7 @@ impl TreemapView {
             selected_index: None,
             linked_hover_index: None,
             highlight: Highlight::default(),
+            pending: None,
             origin: Point::ORIGIN,
         }
     }
@@ -165,37 +170,38 @@ impl TreemapView {
         }
         let refresh_started = Instant::now();
         let previous = self.cache.take();
+        let pending = self
+            .pending
+            .take()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, m)| m);
         let state = self.state.clone();
         let params = self.params;
+        if pending.is_none() && !fresh_layout && previous.is_some() && state.is_live() {
+            // A live tick: lay out now, rasterise on the next frame, so the two never add
+            // up in one frame (the old picture stays meanwhile; `state/live.rs`).
+            self.pending = state.with_result(|r, _| (key, lay_out(&state, r.tree, key, &params)));
+            self.cache = previous;
+            self.state.add_live_work(refresh_started.elapsed());
+            agg_gui::animation::request_draw();
+            return;
+        }
         let next = state.with_result(|result, _| {
-            let tree = &result.tree;
-            let (map, palette) = match previous {
-                Some(c) if fresh_layout => (c.layout, shared_palette),
-                _ => {
-                    let started = Instant::now();
-                    let bounds = PxRect::new(0.0, 0.0, f64::from(width), f64::from(height));
-                    let map = layout(tree, key.zoom_root, bounds, &params);
-                    let palette = shared_palette;
-                    state.count_layout();
-                    if stats_enabled() {
-                        eprintln!(
-                            "hdtreemap stats: layout {:.1} ms | {width}x{height} | {} rects, {} painted",
-                            ms(started),
-                            map.rects().len(),
-                            map.painted_count()
-                        );
-                    }
-                    (map, palette)
-                }
+            let tree = result.tree;
+            let map = match (previous, pending) {
+                (Some(c), _) if fresh_layout => c.layout,
+                (_, Some(map)) => map,
+                _ => lay_out(&state, tree, key, &params),
             };
+            let palette = shared_palette;
             let started = Instant::now();
             let pixels = rasterise(&map, tree, &palette, shading, width, height);
             state.count_raster();
             if stats_enabled() {
-                eprintln!(
-                    "hdtreemap stats: raster {:.1} ms | {width}x{height} | {shading:?}",
+                crate::render::stats_line(&format!(
+                    "raster {:.1} ms | {width}x{height} | {shading:?}",
                     ms(started)
-                );
+                ));
             }
             MapCache {
                 key,
@@ -432,6 +438,24 @@ impl TreemapView {
         ctx.set_line_width(width);
         ctx.stroke();
     }
+}
+
+/// Lay out `tree` for `key` (counted, and timed under `HDTREEMAP_STATS`).
+fn lay_out(state: &AppState, tree: &Tree, key: LayoutKey, params: &LayoutParams) -> TreemapLayout {
+    let started = Instant::now();
+    let (width, height) = (key.width, key.height);
+    let bounds = PxRect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    let map = layout(tree, key.zoom_root, bounds, params);
+    state.count_layout();
+    if stats_enabled() {
+        crate::render::stats_line(&format!(
+            "layout {:.1} ms | {width}x{height} | {} rects, {} painted",
+            ms(started),
+            map.rects().len(),
+            map.painted_count()
+        ));
+    }
+    map
 }
 
 fn ms(started: Instant) -> f64 {

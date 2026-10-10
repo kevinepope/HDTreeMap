@@ -12,7 +12,9 @@
 use std::path::Path;
 
 use super::rng::Rng;
-use crate::model::{NodeFlags, NodeId, SizeMode, Sizes, Tree, TreeBuilder};
+use web_time::Instant;
+
+use crate::model::{ExtTable, NodeFlags, NodeId, SizeMode, Sizes, Tree, TreeBuilder};
 use crate::scan::{ScanErrors, ScanProgress};
 
 /// Expands a directory with `bytes` to spend (and a recipe-specific `arg`) into its
@@ -152,6 +154,16 @@ impl Generator {
         self.builder.as_ref().map(TreeBuilder::tree)
     }
 
+    /// Totals per extension of the tree so far.
+    pub fn extensions(&self) -> Option<ExtTable> {
+        self.builder.as_ref().map(TreeBuilder::extensions)
+    }
+
+    /// Sort the generated tree's child lists until done (true) or `deadline` (false).
+    pub fn sort_some(&mut self, deadline: Option<Instant>) -> bool {
+        self.builder.as_mut().is_none_or(|b| b.sort_some(deadline))
+    }
+
     /// The simulated errors so far.
     pub fn errors(&self) -> &ScanErrors {
         &self.errors
@@ -168,8 +180,7 @@ impl Generator {
     /// the simulated errors. `None` if already taken.
     pub fn take(&mut self) -> Option<(Tree, ScanErrors)> {
         let builder = self.builder.take()?;
-        let mode = builder.size_mode();
-        Some((builder.finish(mode), std::mem::take(&mut self.errors)))
+        Some((builder.finish_sorted(), std::mem::take(&mut self.errors)))
     }
 }
 

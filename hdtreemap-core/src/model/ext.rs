@@ -60,7 +60,8 @@ impl ExtTable {
         Self::from_totals(tree, totals)
     }
 
-    fn from_totals(tree: &Tree, totals: Vec<(Sizes, u64)>) -> Self {
+    /// The table from `(sizes, files)` per extension id of `tree`, sorted by its size mode.
+    pub(crate) fn from_totals(tree: &Tree, totals: Vec<(Sizes, u64)>) -> Self {
         let rows = totals
             .into_iter()
             .enumerate()

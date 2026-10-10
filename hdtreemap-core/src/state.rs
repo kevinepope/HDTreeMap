@@ -245,6 +245,12 @@ impl AppState {
 
     /// [`AppState::pump`] for the full scan.
     fn pump_scan(&self, budget: Duration) -> bool {
+        // A live refresh takes this frame's time; the scan advances in the next one, so
+        // the two never add up in one frame (`state/live.rs`).
+        if self.is_scanning() && self.live_tick(Instant::now()) {
+            self.tick_progress();
+            return true;
+        }
         let poll = {
             let mut scan = self.inner.scan.borrow_mut();
             let Some(source) = scan.as_mut() else {
@@ -254,17 +260,7 @@ impl AppState {
         };
         match poll {
             ScanPoll::Running => {
-                let now = Instant::now();
-                let due = self
-                    .inner
-                    .last_progress
-                    .get()
-                    .is_none_or(|last| now.duration_since(last) >= PROGRESS_INTERVAL);
-                if due {
-                    self.inner.last_progress.set(Some(now));
-                    self.bump_progress();
-                }
-                self.live_tick(now);
+                self.tick_progress();
                 true
             }
             ScanPoll::Finished(result) => {
@@ -347,6 +343,20 @@ impl AppState {
             source.cancel();
         }
         self.inner.live.clear();
+    }
+
+    /// Tick [`AppState::progress_version`] if the last tick is [`PROGRESS_INTERVAL`] old.
+    fn tick_progress(&self) {
+        let now = Instant::now();
+        let due = self
+            .inner
+            .last_progress
+            .get()
+            .is_none_or(|last| now.duration_since(last) >= PROGRESS_INTERVAL);
+        if due {
+            self.inner.last_progress.set(Some(now));
+            self.bump_progress();
+        }
     }
 
     /// Tick [`AppState::progress_version`] (the live counters refresh).

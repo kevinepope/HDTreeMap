@@ -116,21 +116,28 @@ impl AppState {
         let started = Instant::now();
         let table = {
             let scan = self.inner.scan.borrow();
-            let Some(partial) = scan.as_ref().and_then(|s| s.partial()) else {
+            let Some(source) = scan.as_ref() else {
                 return false;
             };
-            ExtTable::from_tree(partial.tree)
+            // Nothing to show until the tree holds more than its root.
+            if source.partial().is_none_or(|p| p.tree.arena_len() < 2) {
+                return false;
+            }
+            let Some(table) = source.partial_extensions() else {
+                return false;
+            };
+            table
         };
         let spent = started.elapsed();
         if stats_enabled() {
-            eprintln!(
-                "hdtreemap stats: live tick {} | extensions {:.1} ms | last refresh {:.1} ms \
+            crate::render::stats_line(&format!(
+                "live tick {} | extensions {:.1} ms | last refresh {:.1} ms \
                  | next in {} ms",
                 live.ticks.get() + 1,
                 spent.as_secs_f64() * 1000.0,
                 live.work.get().as_secs_f64() * 1000.0,
                 self.live_interval().as_millis()
-            );
+            ));
         }
         *live.extensions.borrow_mut() = Some(table);
         live.last_tick.set(Some(now));

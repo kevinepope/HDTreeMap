@@ -110,6 +110,7 @@ fn the_map_fills_in_while_the_scan_runs() {
     assert_eq!(h.state.tree_version(), version);
     assert_eq!(h.state.map_counters().rasters, rasters);
 
+    let layouts = h.state.map_counters().layouts;
     next_tick(&mut h);
     assert!(h.state.is_scanning(), "still running");
     assert_eq!(h.state.live_ticks(), ticks + 1);
@@ -118,6 +119,11 @@ fn the_map_fills_in_while_the_scan_runs() {
         "a tick bumps the tree version"
     );
     assert!(file_count(&h.state) > files, "the tree grew");
+    // The tick's frame lays the map out; the next one rasterises it.
+    assert_eq!(h.state.map_counters().layouts, layouts + 1);
+    assert_eq!(h.state.map_counters().rasters, rasters);
+    h.frame();
+    assert_eq!(h.state.map_counters().layouts, layouts + 1);
     assert!(
         h.state.map_counters().rasters > rasters,
         "the map was redrawn"
@@ -260,4 +266,22 @@ fn cancelling_a_live_scan_returns_to_the_start_screen() {
     h.frame();
     assert!(h.visible(START_SCREEN_ID));
     assert!(!h.visible(MAIN_VIEW_ID));
+}
+
+#[test]
+fn the_view_lays_out_before_the_scan_has_found_anything() {
+    use hdtreemap_core::ui::breadcrumb::BREADCRUMB_ID;
+    // A scan whose tree is still just its root: no live tick yet, so no result to show.
+    let state = AppState::new();
+    state.start_scan(laptop_target(), Box::new(Stepped::laptop(0)));
+    let h = Harness::with_state(state, Rc::new(DemoPlatform::unpaced()));
+    assert!(h.state.with_result(|_, _| ()).is_none());
+    for id in [CANCEL_BUTTON_ID, SCAN_STRIP_ID, TREEMAP_ID, BREADCRUMB_ID] {
+        let r = h.rect(id);
+        assert!(
+            r.y >= 0.0 && r.y + r.height <= common::HEIGHT,
+            "{id} is on screen: {r:?}"
+        );
+    }
+    h.state.cancel_scan();
 }
