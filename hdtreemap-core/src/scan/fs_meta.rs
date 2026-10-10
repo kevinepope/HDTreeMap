@@ -17,6 +17,35 @@ use std::path::{Path, PathBuf};
 
 use crate::model::Sizes;
 
+/// The path a scan of `root` walks and names its tree after: absolute and canonical, so
+/// every node's path can be handed to the file manager as it is (a relative or `-dash`
+/// root cannot be mistaken for an option), aliases such as macOS's `/Volumes/Macintosh HD`
+/// (a link to `/`) get the root's own rules, and the containing volume is found by prefix.
+/// A root that cannot be canonicalised (it does not exist) is made absolute instead.
+/// Windows' canonical form has a `\\?\` prefix; it is dropped where a plain path means the
+/// same, so names read as the user knows them.
+pub(super) fn resolve_root(root: &Path) -> PathBuf {
+    let resolved = std::fs::canonicalize(root)
+        .or_else(|_| std::path::absolute(root))
+        .unwrap_or_else(|_| root.to_path_buf());
+    match resolved.to_str().and_then(strip_verbatim) {
+        Some(plain) => PathBuf::from(plain),
+        None => resolved,
+    }
+}
+
+/// `C:\...` for `\\?\C:\...` and `\\server\share\...` for `\\?\UNC\server\share\...`;
+/// `None` for anything else (no prefix, or a verbatim path with no plain spelling).
+pub(super) fn strip_verbatim(path: &str) -> Option<String> {
+    let rest = path.strip_prefix(r"\\?\")?;
+    if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        return Some(format!(r"\\{unc}"));
+    }
+    let bytes = rest.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    drive.then(|| rest.to_string())
+}
+
 /// Allocated and apparent size of the entry at `path` described by `meta` (its `lstat`).
 pub(super) fn sizes(path: &Path, meta: &Metadata) -> Sizes {
     Sizes::new(allocated(path, meta), meta.len())
@@ -139,6 +168,47 @@ mod tests {
         assert_eq!(s.apparent, 10_000);
         // Whole blocks on Unix filesystems; the exact length for an uncompressed NTFS file.
         assert!(s.allocated >= 10_000, "{s:?}");
+    }
+
+    #[test]
+    fn roots_are_resolved_to_absolute_paths() {
+        let relative = resolve_root(Path::new("some-relative-name"));
+        assert!(relative.is_absolute(), "{relative:?}");
+        assert!(relative.ends_with("some-relative-name"));
+        let dashed = resolve_root(Path::new("-rf"));
+        assert!(
+            dashed.is_absolute() && dashed.ends_with("-rf"),
+            "{dashed:?}"
+        );
+        let here = std::env::current_dir().expect("cwd");
+        assert_eq!(
+            resolve_root(Path::new(".")),
+            std::fs::canonicalize(&here).expect("canonical cwd")
+        );
+    }
+
+    #[test]
+    fn verbatim_prefixes_are_stripped_from_drive_and_unc_paths() {
+        assert_eq!(
+            strip_verbatim(r"\\?\C:\Users\me").as_deref(),
+            Some(r"C:\Users\me")
+        );
+        assert_eq!(
+            strip_verbatim(r"\\?\UNC\server\share\x").as_deref(),
+            Some(r"\\server\share\x")
+        );
+        assert_eq!(strip_verbatim(r"\\?\Volume{abc}\x"), None);
+        assert_eq!(strip_verbatim(r"C:\plain"), None);
+        assert_eq!(strip_verbatim("/usr/local"), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_macos_boot_volume_alias_resolves_to_the_root() {
+        let alias = Path::new("/Volumes/Macintosh HD");
+        if alias.exists() {
+            assert_eq!(resolve_root(alias), PathBuf::from("/"));
+        }
     }
 
     #[test]

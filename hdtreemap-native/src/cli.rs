@@ -100,7 +100,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 if path.is_some() {
                     return Err("only one PATH can be given".to_string());
                 }
-                path = Some(PathBuf::from(arg));
+                path = Some(absolute(arg));
             }
         }
         i += 1;
@@ -119,11 +119,17 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         (Some(_), Some(None)) => Err("--dump-top with --demo needs a drive id".to_string()),
         (Some(top), None) => Ok(Command::DumpTop {
             top,
-            source: DumpSource::Path(path.unwrap_or_else(|| PathBuf::from("."))),
+            source: DumpSource::Path(path.unwrap_or_else(|| absolute("."))),
         }),
         (None, Some(id)) => Ok(Command::Demo { id, highlight }),
         (None, None) => Ok(Command::App { path, highlight }),
     }
+}
+
+/// `arg` as an absolute path (relative to the working directory), so a name such as
+/// `-rf` can never reach a command line as an option. The scanner canonicalises it too.
+fn absolute(arg: &str) -> PathBuf {
+    std::path::absolute(arg).unwrap_or_else(|_| PathBuf::from(arg))
 }
 
 #[cfg(test)]
@@ -147,13 +153,32 @@ mod tests {
         assert_eq!(
             p(&["/data"]),
             Ok(Command::App {
-                path: Some(PathBuf::from("/data")),
+                path: Some(absolute("/data")),
                 highlight: None
             })
         );
         assert_eq!(p(&["--help"]), Ok(Command::Help));
         assert!(p(&["a", "b"]).is_err());
         assert!(p(&["--bogus"]).is_err());
+    }
+
+    #[test]
+    fn relative_and_dash_paths_become_absolute() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let Ok(Command::App {
+            path: Some(path), ..
+        }) = p(&["-rf"])
+        else {
+            panic!("a dash name is a path");
+        };
+        assert_eq!(path, cwd.join("-rf"));
+        let Ok(Command::App {
+            path: Some(path), ..
+        }) = p(&["photos"])
+        else {
+            panic!("a relative path");
+        };
+        assert_eq!(path, cwd.join("photos"));
     }
 
     #[test]
@@ -181,14 +206,14 @@ mod tests {
             p(&["--dump-top", "15", "/home"]),
             Ok(Command::DumpTop {
                 top: 15,
-                source: DumpSource::Path(PathBuf::from("/home"))
+                source: DumpSource::Path(absolute("/home"))
             })
         );
         assert_eq!(
             p(&["--dump-top", "5"]),
             Ok(Command::DumpTop {
                 top: 5,
-                source: DumpSource::Path(PathBuf::from("."))
+                source: DumpSource::Path(absolute("."))
             })
         );
         assert_eq!(
@@ -215,7 +240,7 @@ mod tests {
         assert_eq!(
             p(&["/data", "--highlight", "mov"]),
             Ok(Command::App {
-                path: Some(PathBuf::from("/data")),
+                path: Some(absolute("/data")),
                 highlight: Some("mov".into())
             })
         );

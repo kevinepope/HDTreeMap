@@ -58,15 +58,17 @@ fn sizes_counts_and_extensions_match_the_disk() {
     assert_eq!(tree.file_count(), 4, "hidden files are counted");
     assert_eq!(tree.dir_count(), 3);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
-    assert_eq!(result.root, dir.path());
-    assert_eq!(tree.path(tree.root()), dir.path());
+    // The root is canonical (on macOS the temp dir under /var is really under /private/var).
+    let root = fs::canonicalize(dir.path()).expect("canonical");
+    assert_eq!(result.root, root);
+    assert_eq!(tree.path(tree.root()), root);
 
     let docs = find(tree, "docs").expect("docs");
     assert_eq!(tree.sizes(docs).apparent, 6000);
     let data = find(tree, "docs/deep/data.bin").expect("data.bin");
     assert_eq!(
         tree.path(data),
-        dir.path().join("docs").join("deep").join("data.bin")
+        root.join("docs").join("deep").join("data.bin")
     );
     // Sorted by allocated size: docs first.
     assert_eq!(tree.children(tree.root()).next(), Some(docs));
@@ -152,6 +154,21 @@ fn a_file_root_has_correct_paths() {
 }
 
 #[test]
+fn the_root_is_made_absolute_and_canonical() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    sample_tree(dir.path());
+    // A path with `..` in it names the scan by where it really is.
+    let roundabout = dir.path().join("docs").join("..");
+    let (result, _) = scan(&roundabout);
+    let canonical = fs::canonicalize(dir.path()).expect("canonical");
+    assert_eq!(result.root, canonical);
+    assert_eq!(result.tree.path(result.tree.root()), canonical);
+    assert_eq!(result.tree.file_count(), 4);
+    let data = find(&result.tree, "docs/deep/data.bin").expect("data.bin");
+    assert!(result.tree.path(data).is_absolute());
+}
+
+#[test]
 fn a_cancelled_scan_stops_early() {
     let dir = tempfile::tempdir().expect("temp dir");
     for i in 0..50 {
@@ -209,6 +226,17 @@ mod unix {
     }
 
     #[test]
+    fn a_symlinked_root_is_scanned_where_it_points() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        sample_tree(&dir.path().join("real"));
+        symlink(dir.path().join("real"), dir.path().join("alias")).expect("dir symlink");
+        let (result, _) = scan(&dir.path().join("alias"));
+        let canonical = fs::canonicalize(dir.path().join("real")).expect("canonical");
+        assert_eq!(result.tree.path(result.tree.root()), canonical);
+        assert_eq!(result.tree.file_count(), 4);
+    }
+
+    #[test]
     fn hard_links_are_counted_once() {
         let dir = tempfile::tempdir().expect("temp dir");
         write(&dir.path().join("a/original.bin"), 50_000);
@@ -238,7 +266,10 @@ mod unix {
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod back");
 
         assert_eq!(result.errors.total(), 1, "{:?}", result.errors);
-        assert_eq!(result.errors.entries()[0].path, locked);
+        let canonical = fs::canonicalize(dir.path())
+            .expect("canonical")
+            .join("locked");
+        assert_eq!(result.errors.entries()[0].path, canonical);
         assert_eq!(progress.snapshot().errors, 1);
         let node = find(&result.tree, "locked").expect("locked listed");
         assert!(result

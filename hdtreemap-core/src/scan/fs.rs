@@ -66,6 +66,7 @@ impl FsScanner {
     /// Start scanning `root` on a new thread. `notify` (the UI thread's queue) is woken as
     /// progress is published and when the scan finishes.
     pub fn start(root: PathBuf, notify: Option<UiQueue>) -> Self {
+        let root = fs_meta::resolve_root(&root);
         let progress = Arc::new(ScanProgress::new());
         let (tx, rx) = mpsc::channel();
         let worker_progress = Arc::clone(&progress);
@@ -156,6 +157,8 @@ pub fn scan_blocking(
     progress: &Arc<ScanProgress>,
     notify: Option<&UiQueue>,
 ) -> ScanResult {
+    let resolved = fs_meta::resolve_root(root);
+    let root = resolved.as_path();
     let mut errors = ScanErrors::default();
     let file_root = root_file_name(root);
     let root_name = match (&file_root, root.parent()) {
