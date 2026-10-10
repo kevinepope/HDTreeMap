@@ -252,33 +252,41 @@ impl Tree {
     pub fn sort_children(&mut self) {
         let mut kids: Vec<NodeId> = Vec::new();
         for index in 0..self.nodes.len() {
-            let node = &self.nodes[index];
-            if !node.is_dir() || node.flags.contains(NodeFlags::REMOVED) {
-                continue;
-            }
-            kids.clear();
-            let mut child = node.first_child;
-            while let Some(c) = self.nodes.get(child.index()) {
-                kids.push(child);
-                child = c.next_sibling;
-            }
-            if kids.len() < 2 {
-                continue;
-            }
-            let mode = self.mode;
-            kids.sort_by(|&a, &b| {
-                let (na, nb) = (&self.nodes[a.index()], &self.nodes[b.index()]);
-                nb.size(mode)
-                    .cmp(&na.size(mode))
-                    .then_with(|| self.name(a).cmp(self.name(b)))
-            });
-            self.nodes[index].first_child = kids[0];
-            for pair in kids.windows(2) {
-                self.nodes[pair[0].index()].next_sibling = pair[1];
-            }
-            if let Some(&last) = kids.last() {
-                self.nodes[last.index()].next_sibling = NodeId::NONE;
-            }
+            self.sort_child_list(NodeId(index as u32), &mut kids);
+        }
+    }
+
+    /// Sort one live directory's children like [`Tree::sort_children`]. `kids` is scratch
+    /// space, reused across calls.
+    pub(crate) fn sort_child_list(&mut self, id: NodeId, kids: &mut Vec<NodeId>) {
+        let Some(node) = self.nodes.get(id.index()) else {
+            return;
+        };
+        if !node.is_dir() || node.flags.contains(NodeFlags::REMOVED) {
+            return;
+        }
+        kids.clear();
+        let mut child = node.first_child;
+        while let Some(c) = self.nodes.get(child.index()) {
+            kids.push(child);
+            child = c.next_sibling;
+        }
+        if kids.len() < 2 {
+            return;
+        }
+        let mode = self.mode;
+        kids.sort_by(|&a, &b| {
+            let (na, nb) = (&self.nodes[a.index()], &self.nodes[b.index()]);
+            nb.size(mode)
+                .cmp(&na.size(mode))
+                .then_with(|| self.name(a).cmp(self.name(b)))
+        });
+        self.nodes[id.index()].first_child = kids[0];
+        for pair in kids.windows(2) {
+            self.nodes[pair[0].index()].next_sibling = pair[1];
+        }
+        if let Some(&last) = kids.last() {
+            self.nodes[last.index()].next_sibling = NodeId::NONE;
         }
     }
 
@@ -312,15 +320,7 @@ impl Tree {
         self.nodes[id.index()].next_sibling = NodeId::NONE;
 
         // Flag the whole subtree, so arena-wide passes (the extension table) skip it.
-        let mut stack = vec![id];
-        while let Some(n) = stack.pop() {
-            let node = &mut self.nodes[n.index()];
-            node.flags.insert(NodeFlags::REMOVED);
-            if node.is_dir() {
-                self.dirs = self.dirs.saturating_sub(1);
-            }
-            stack.extend(self.children(n));
-        }
+        self.flag_removed(id);
 
         let mut up = parent;
         while let Some(a) = self.nodes.get_mut(up.index()) {
@@ -330,6 +330,22 @@ impl Tree {
             up = a.parent;
         }
         Ok(removed)
+    }
+
+    /// Flag `id` and everything below it [`NodeFlags::REMOVED`] (they stay linked to each
+    /// other; the caller unlinks `id`) and stop counting their directories.
+    pub(crate) fn flag_removed(&mut self, id: NodeId) {
+        let mut stack = vec![id];
+        while let Some(n) = stack.pop() {
+            let Some(node) = self.nodes.get_mut(n.index()) else {
+                continue;
+            };
+            node.flags.insert(NodeFlags::REMOVED);
+            if node.is_dir() {
+                self.dirs = self.dirs.saturating_sub(1);
+            }
+            stack.extend(self.children(n));
+        }
     }
 
     /// Whether `id` is a live (not removed) node of this tree.
