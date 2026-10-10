@@ -19,6 +19,10 @@ rust-version = "1.87"
 authors = ["Lars Brubaker <larsbrubaker@matterhackers.com>"]
 license = "MIT"
 repository = "https://github.com/larsbrubaker/HDTreeMap"
+homepage = "https://larsbrubaker.github.io/HDTreeMap/"
+readme = "README.md"
+keywords = ["disk-usage", "treemap", "du", "gui", "agg-gui"]
+categories = ["filesystem", "visualization", "gui"]
 
 [workspace.dependencies]
 agg-gui = "0.5.1"
