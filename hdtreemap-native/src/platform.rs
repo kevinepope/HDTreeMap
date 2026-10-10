@@ -91,7 +91,8 @@ fn reveal_error(path: &Path, err: impl std::fmt::Display) -> PlatformError {
 }
 
 /// Run `command` to completion and turn a launch failure or a failing exit status into an
-/// error.
+/// error. (Not used on Windows, where explorer's exit status is meaningless.)
+#[cfg(not(windows))]
 fn run_checked(mut command: Command, path: &Path) -> ActionResult {
     let status = command.status().map_err(|err| reveal_error(path, err))?;
     if status.success() {
