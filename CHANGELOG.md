@@ -5,6 +5,18 @@ All notable changes to HDTreeMap are documented here.
 ## Unreleased
 
 ### Added
+- M2 treemap: finished scans open straight on a squarified treemap with cushion shading
+  (van Wijk), coloured by the 16 biggest extensions. Sub-pixel items merge into
+  aggregate blocks so every byte keeps its area. Hover outlines the item and its folder,
+  shows a tooltip and fills the status bar. Click selects and Escape clears. Double click
+  zooms into a folder; Backspace, the mouse back button or the breadcrumb zooms out. The
+  toolbar has the size mode, a cushion on/off toggle and Rescan. The status bar shows
+  totals, unreadable items (with a Full Disk Access hint on macOS) and free space. The map
+  is laid out and rasterised (in parallel natively) only when its size, zoom, tree or
+  shading changes; hovering never re-rasterises.
+- `HDTREEMAP_STATS=1` prints layout, raster and whole-frame times;
+  `cargo run --release -p hdtreemap-core --example bench_treemap -- [DEMO_ID | PATH] [WxH]`
+  times the treemap headless.
 - M1 scanner and model: an arena tree of 40-byte nodes with both allocated and apparent
   sizes, size-mode switching without rescanning, an extension table, and subtree removal.
 - Parallel filesystem scan (jwalk) on a worker thread: stays on one filesystem, counts hard
@@ -12,9 +24,9 @@ All notable changes to HDTreeMap are documented here.
   duplicate when scanning `/`, and lists unreadable folders instead of failing.
 - Simulated drives for the web demo: a deterministic generator for six realistic drives
   (up to 1.8 million entries for the archive server) streamed at a believable pace.
-- Scan screen with live counters, current folder, an estimated progress bar for drives and
-  Cancel; results screen with totals, largest folders, top file types, unreadable items,
-  a size-mode switch, Back and Rescan.
+- Scan screen with live counters, current folder (elided in the middle), an estimated
+  progress bar for drives and Cancel. (M1's interim results screen was replaced by the
+  treemap view in M2.)
 - Start-screen drive cards are now one big click target.
 - `hdtreemap --demo [ID]` (the demo drives natively) and `hdtreemap --dump-top N PATH`
   (scan headless, print the largest folders and files, totals and timing).

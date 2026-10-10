@@ -132,6 +132,15 @@ Scanning is behind a `ScanSource` abstraction: `FsScanner` (native only, `cfg(no
 - Squarified layout from the zoom root down to the visible pixel size. Recursion stops when a rectangle is smaller than about 1 px², and the leftover area is drawn as one aggregated block.
 - Output is a flat `Vec<LayoutRect { node, rect, cushion: [f32; 4] }>`, the cushion surface coefficients accumulated as in the van Wijk paper. The same list is used for hit testing (point → deepest rectangle, by walking the tree's rectangles).
 - This is pure code that takes a tree and a rectangle and returns rectangles, so it is easy to unit-test (areas add up, nothing overlaps, everything stays in bounds, aspect ratios are sensible).
+- *As built (M2):* coordinates are physical pixels, Y down (the raster's layout). The list is
+  pre-order (a folder before its contents) and each rectangle has a kind: `Dir` (tiled by
+  its children, not painted), `File`, `FolderBlock` (a folder none of whose contents is
+  ≥ `min_area`, default 1 px²) or `Aggregate` (one per folder: the children below
+  `min_area`, with their count and bytes). Painted rectangles tile the bounds exactly; a
+  pixel belongs to the rectangle containing its centre. Cushion: ridge height 0.4 at the
+  zoom root, ×0.75 per level, coefficients `[a, b, c, d]` of `a·x² + b·y² + c·x + d·y` as in
+  WinDirStat's `AddRidge`. Hit testing uses a 32 px cell grid; each rectangle stores its
+  parent's index for the folder chain. No gaps between folders: the cushions show nesting.
 
 ### 3.4 Rendering (`render/`)
 - Cushion shading is computed per pixel, so it is not a vector-fill job. The map is rasterised straight into an RGBA buffer the size of the widget in physical pixels: for each file rectangle, every pixel gets `ambient + diffuse·max(0, n·L)`, with the normal taken from that rectangle's cushion coefficients. Bands of rows are split across rayon.
@@ -139,6 +148,17 @@ Scanning is behind a `ScanSource` abstraction: `FsScanner` (native only, `cfg(no
 - Hover and selection outlines and the extension highlight are drawn on top as vector strokes in `paint_overlay`, so moving the mouse never re-rasterises the map.
 - Palette: 12–16 hand-picked distinct hues for the top extensions and neutral grey for the rest, the same idea as WinDirStat.
 - Performance target: under 10 ms per frame when nothing has changed (agg-gui rule), and under about 150 ms to re-rasterise a 4K map with a million files. Both are measured with a stats env var, following the `CRITTERS_STATS` pattern.
+- *As built (M2):* `I = Ia + max(0, Is·n·L)` with `Ia = 0.15`, `Is = 1 − Ia`, `L` ∝ (−1, −1, 10),
+  times a 1.2 brightness gain, clamped. Flat mode darkens each rectangle's right and bottom
+  pixel line. Rows go in 16-row bands (rayon natively, serial on wasm). `HDTREEMAP_STATS=1`
+  prints each layout and raster pass and, once a second, the CPU layout+paint time per
+  frame; `examples/bench_treemap` times them headless. Measured on a loaded 10-core Apple
+  Silicon machine, archive-server demo (1.56 M files) at 3840×2160: layout 45–90 ms, raster
+  13–25 ms; hovering it in a 2400×1442 window: 0.85 ms average frame (CPU).
+- *As built (M2):* zoom root, hover, selection and shading live in `AppState`
+  (`state/view.rs`) with three versions widgets key on: `tree_version` (new scan, size
+  mode), `map_version` (+ zoom, shading; the breadcrumb), `detail_version` (+ hover,
+  selection; the status bar). Switching the size mode no longer rebuilds the screen.
 
 ### 3.5 UI widgets (`ui/`)
 These are built from existing agg-gui widgets wherever possible:
@@ -173,7 +193,7 @@ Each milestone ends green: fmt, clippy `-D warnings` and tests.
 
 1. **M0 – Scaffold**: workspace (core / native / wasm), CLAUDE.md (copied from the Critters rules), MIT LICENSE, pre-commit scripts, CI matrix on all three OSes plus a wasm check and Pages deploy, and the start screen running both natively (real volumes) and in the browser (simulated drive).
 2. **M1 – Scanner + model** *(done)*: jwalk scan into the arena, both size modes, inode dedup, filesystem boundaries, cancel, and error collection. Tests use temporary directory trees (including hard links and symlinks, on Unix). Includes a CLI-ish `--dump-top N` debug flag for checking the scanner without the UI.
-3. **M2 – Treemap**: squarify, cushion rasteriser, `TreemapView` with hover and status bar, progress screen, and zoom in and out with the breadcrumb. Unit tests for layout invariants and a golden-image test for the rasteriser.
+3. **M2 – Treemap** *(done)*: squarify, cushion rasteriser, `TreemapView` with hover and status bar, progress screen, and zoom in and out with the breadcrumb. Unit tests for layout invariants and a golden-image test for the rasteriser.
 4. **M3 – Linked views**: folder tree and extension legend, all synced with the map selection, plus highlight-by-extension.
 5. **M4 – Actions**: context menu, reveal, open, copy path, rescan folder, Move to Trash with confirmation, and the menu bar items.
 6. **M5 – Polish and perf**: measure on a real full-disk scan of each OS, **live map during the scan**, remembered window bounds and settings, and the colour-by-top-folder mode.

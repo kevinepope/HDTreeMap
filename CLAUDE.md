@@ -36,17 +36,21 @@ hdtreemap-core/     rlib: everything testable, no platform code
   src/model/          arena Tree (40-byte Node), TreeBuilder, SizeMode, ExtTable
   src/scan/           ScanSource, ScanProgress, FsScanner (native: jwalk on a worker thread)
   src/demo_fs/        DemoScanner + per-drive recipes for the simulated drives (all targets)
+  src/layout/         squarified cushion layout (Y-down physical pixels), aggregates, hit grid
+  src/render/         palette + cushion rasteriser (rayon row bands natively), HDTREEMAP_STATS
   src/state.rs        AppState (screen, running scan, finished result); state/pump.rs polls
-                      the running scan once per frame from an agg-gui ui_thread drain hook
-  src/ui/             widgets: start, scan and results screens (later: treemap, tree, legend)
+                      the running scan once per frame from an agg-gui ui_thread drain hook;
+                      state/view.rs: zoom root, hover, selection, shading and their versions
+  src/ui/             widgets: start and scan screens, main_view (toolbar, breadcrumb, the
+                      custom TreemapView, status bar); later the folder tree and legend
   tests/              headless UI tests (common/ harness), scanner tests, file_line_count
+  examples/           bench_treemap: headless layout/raster timing
 hdtreemap-native/   bin `hdtreemap`: agg-gui-shell + NativePlatform (sysinfo, rfd, opener, trash),
                     CLI (`--demo [ID]`, `--dump-top N [PATH | --demo ID]`)
 hdtreemap-wasm/     cdylib: agg-gui-web-shell + DemoPlatform (not a default member)
 demo/               static page + bun/vite bundle for GitHub Pages
 ```
 
-Later milestones add `layout/` and `render/` to the core, as laid out in `docs/PLAN.md` §3.
 Add a module when it holds real code, not before.
 
 ## PlatformServices and ScanSource
@@ -87,6 +91,7 @@ wasm-pack build hdtreemap-wasm --target web --out-dir ../demo/public/pkg --no-ty
 ```
 
 `HDTREEMAP_SCREENSHOT=out.png cargo run -p hdtreemap-native` captures a frame and exits.
+`HDTREEMAP_STATS=1` prints treemap layout / raster times and per-frame layout+paint time.
 `cargo run --release -p hdtreemap-native -- --dump-top 15 PATH` checks the scanner headless.
 Run `scripts/pre-commit-check.sh` (or `.ps1`) before every commit; it mirrors CI.
 

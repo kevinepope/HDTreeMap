@@ -10,17 +10,25 @@ against simulated drives. It never reads anything on your computer.
 
 ## Status
 
-Early development. Milestone M0 (scaffold) is done: the start screen lists your mounted
-volumes with used/free bars, and you can choose a folder. Scanning and the treemap itself
-come next. See [docs/PLAN.md](docs/PLAN.md) for the full plan.
+Early development. Milestones M0–M2 are done: pick a drive or folder, watch the parallel
+scan, then explore the result as a cushion treemap. The linked folder tree and extension
+legend come next. See [docs/PLAN.md](docs/PLAN.md) for the full plan.
+
+## Features
+
+- Parallel scan with live progress and Cancel. Stays on one filesystem, doesn't follow
+  symlinks, and counts hard links once. Unreadable folders are counted, not fatal.
+- Squarified treemap with cushion shading (or flat), coloured by file extension; folders
+  too small to open and leftover small files show as grey blocks, so all space is shown.
+- Hover for the path, size and share of each item (status bar and tooltip); click to
+  select; double-click to zoom into a folder; Backspace, the mouse back button or the
+  breadcrumb to zoom out.
+- "Size on disk" or apparent size, switchable without rescanning.
+- Status bar with totals, unreadable items and free space.
 
 ## Planned features
 
-- Parallel scan with live progress and Cancel. Stays on one filesystem, doesn't follow
-  symlinks, and counts hard links once.
-- Squarified treemap with cushion shading, coloured by file extension.
-- Linked folder tree, extension legend, breadcrumb zoom and status bar.
-- "Size on disk" or apparent size, switchable without rescanning.
+- Linked folder tree and extension legend.
 - Reveal in Finder / Explorer / file manager, Open, Copy Path, Rescan, and Move to Trash
   (with confirmation; never a permanent delete).
 - The same app in the browser as a demo, on simulated drives.
