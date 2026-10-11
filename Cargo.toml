@@ -12,7 +12,7 @@ members = ["hdtreemap-core", "hdtreemap-native", "hdtreemap-wasm"]
 default-members = ["hdtreemap-core", "hdtreemap-native"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 # agg-gui-shell / agg-gui-web-shell need wgpu 29, which requires 1.87.
 rust-version = "1.87"

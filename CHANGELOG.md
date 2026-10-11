@@ -2,7 +2,7 @@
 
 All notable changes to HDTreeMap are documented here.
 
-## Unreleased
+## 0.1.1 — 2026-10-10
 
 ### Added
 - A light theme, now the default, with a dark one and Match System (the OS appearance on

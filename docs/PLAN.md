@@ -5,7 +5,7 @@ You point it at a drive or folder, it scans the folder in parallel, and it shows
 file as a shaded rectangle whose area is proportional to the file's size. The goal is
 a small, fast and clean tool, not a WinDirStat clone with every feature.
 
-Status: **v0.1.0 complete (2026-10-10): M0–M6 done.** Open items are listed in §6. License MIT. Repo github.com/larsbrubaker/HDTreeMap (rust-apps submodule).
+Status: **v0.1.1 released (2026-10-10): M0–M6 done, plus the light/dark theme and run-mac.command.** Open items are listed in §6. License MIT. Repo github.com/larsbrubaker/HDTreeMap (rust-apps submodule).
 
 ---
 
