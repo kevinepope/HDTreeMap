@@ -2,6 +2,13 @@
 
 All notable changes to HDTreeMap are documented here.
 
+## Unreleased
+
+### Added
+- `run-windows.cmd`: the Windows counterpart of `run-mac.command`, a double-click
+  launcher that builds a release binary and starts the app, passing its arguments through
+  (`[PATH | --demo ID]`).
+
 ## 0.1.1 — 2026-10-10
 
 ### Added

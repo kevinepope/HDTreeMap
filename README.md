@@ -150,7 +150,8 @@ cargo run --release             # start screen
 cargo run --release -- ~/Code   # open straight on a folder
 ```
 
-On macOS you can double-click `run-mac.command` (or run `./run-mac.command [PATH | --demo ID]`).
+On macOS you can double-click `run-mac.command` (or run `./run-mac.command [PATH | --demo ID]`);
+on Windows, double-click `run-windows.cmd` (or run `run-windows.cmd [PATH | --demo ID]`).
 
 Web demo (needs [wasm-pack](https://rustwasm.github.io/wasm-pack/) and [bun](https://bun.sh/)):
 

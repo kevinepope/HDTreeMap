@@ -141,7 +141,7 @@ without it use neither).
 `cargo run --release -p hdtreemap-native -- --dump-top 15 PATH` checks the scanner headless.
 Run `scripts/pre-commit-check.sh` (or `.ps1`) before every commit; it mirrors CI.
 On macOS, `run-mac.command` (double-click, or `./run-mac.command [PATH | --demo ID]`) builds
-the release binary and launches it.
+the release binary and launches it; on Windows, `run-windows.cmd` does the same.
 
 ## Workflow: commit as you go
 
