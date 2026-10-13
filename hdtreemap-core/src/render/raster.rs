@@ -104,8 +104,8 @@ pub fn rasterise(
     let paint_band = |(band, chunk): (usize, &mut [u8])| {
         let first_row = band as u32 * BAND_ROWS;
         let rows = (chunk.len() / row_bytes) as u32;
-        for px in chunk.chunks_exact_mut(4) {
-            px.copy_from_slice(&background);
+        for px in chunk.as_chunks_mut::<4>().0 {
+            *px = background;
         }
         for &leaf in bins.cell(band) {
             let (rect, color) = &leaves[leaf as usize];
@@ -182,7 +182,7 @@ fn paint_cushion(mut band: Band<'_>, rect: &LayoutRect, color: Rgb) {
     for y in y0..y1 {
         let dzdy = 2.0 * b * (y as f32 + 0.5) + d;
         let row = band.row(y, x0, x1);
-        for (i, px) in row.chunks_exact_mut(4).enumerate() {
+        for (i, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let x = (x0 as usize + i) as f32 + 0.5;
             let light = cushion_intensity(2.0 * a * x + c, dzdy) * BRIGHTNESS;
             px[0] = to_byte(color[0] * light);
@@ -206,7 +206,7 @@ fn paint_flat(mut band: Band<'_>, rect: &LayoutRect, color: Rgb) {
     let edge = color.map(|c| to_byte(c * FLAT_INTENSITY * FLAT_EDGE));
     for y in y0..y1 {
         let row = band.row(y, x0, x1);
-        for (i, px) in row.chunks_exact_mut(4).enumerate() {
+        for (i, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let x = x0 + i as u32;
             let on_edge = Some(y) == edge_y || Some(x) == edge_x;
             let rgb = if on_edge { edge } else { fill };

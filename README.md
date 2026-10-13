@@ -138,7 +138,7 @@ borrows no code from them. See [docs/PLAN.md](docs/PLAN.md) for the design.
 
 ## Build from source
 
-You need a Rust toolchain (1.87 or newer). The workspace expects
+You need a Rust toolchain (1.95 or newer). The workspace expects
 [agg-gui](https://github.com/larsbrubaker/agg-gui) checked out next to this repository
 (`../agg-gui`), as it is in the `rust-apps` superproject:
 

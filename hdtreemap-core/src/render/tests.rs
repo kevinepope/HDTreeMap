@@ -73,7 +73,7 @@ fn every_rectangle_shows_its_colour_lit_by_its_cushion() {
     let (tree, palette, map) = fixture();
     let buf = rasterise(&map, &tree, &palette, Shading::Cushion, W, H);
     assert_eq!(buf.len(), (W * H * 4) as usize);
-    assert!(buf.chunks_exact(4).all(|p| p[3] == 255));
+    assert!(buf.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
     let rects = painted(&map);
     assert_eq!(rects.len(), 5);
     for r in rects {
@@ -177,7 +177,7 @@ fn empty_maps_are_background_and_zero_sizes_are_fine() {
         &LayoutParams::default(),
     );
     let buf = rasterise(&map, &tree, &palette, Shading::Cushion, 4, 3);
-    assert!(buf.chunks_exact(4).all(|p| p == BACKGROUND));
+    assert!(buf.as_chunks::<4>().0.iter().all(|p| *p == BACKGROUND));
     assert!(rasterise(&map, &tree, &palette, Shading::Cushion, 0, 0).is_empty());
     assert!(rasterise(&map, &tree, &palette, Shading::Flat, 0, 5).is_empty());
 }

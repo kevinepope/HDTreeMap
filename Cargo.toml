@@ -14,8 +14,9 @@ default-members = ["hdtreemap-core", "hdtreemap-native"]
 [workspace.package]
 version = "0.1.1"
 edition = "2021"
-# agg-gui-shell / agg-gui-web-shell need wgpu 29, which requires 1.87.
-rust-version = "1.87"
+# The highest rust-version among the locked dependencies: sysinfo 0.39 requires 1.95
+# (wgpu 29, under agg-gui-shell / agg-gui-web-shell, needs 1.87).
+rust-version = "1.95"
 authors = ["Lars Brubaker <larsbrubaker@matterhackers.com>"]
 license = "MIT"
 repository = "https://github.com/larsbrubaker/HDTreeMap"

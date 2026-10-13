@@ -174,7 +174,13 @@ mod tests {
         assert!(spread > 40, "{mid:?}");
         // A tight icon fills more of the square.
         let tight = rgba(size, TIGHT_MARGIN);
-        let opaque = |img: &[u8]| img.chunks_exact(4).filter(|p| p[3] == 255).count();
+        let opaque = |img: &[u8]| {
+            img.as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| p[3] == 255)
+                .count()
+        };
         assert!(opaque(&tight) > opaque(&img));
     }
 }
