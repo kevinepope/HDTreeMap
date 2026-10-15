@@ -19,8 +19,6 @@ fi
 fail() {
     echo
     echo "HDTreeMap: $1"
-    # Keep the Terminal window open so the message can be read after a double-click.
-    read -r -p "Press Return to close."
     exit 1
 }
 
