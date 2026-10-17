@@ -58,7 +58,7 @@ pub const RESCAN_ID: &str = "main-rescan";
 pub const SIZE_MODE_ID: &str = "main-size-mode";
 /// Widget id of the colour-scheme switch (file type / top-level folder).
 pub const COLOR_BY_ID: &str = "main-color-by";
-/// Widget id of the shading switch (cushion / flat / bevel).
+/// Widget id of the shading switch (cushion / flat / bevel / city).
 pub const SHADING_ID: &str = "main-shading";
 /// Widget id of the status bar's hovered / selected item line.
 pub const STATUS_ITEM_ID: &str = "status-item";
@@ -263,7 +263,7 @@ fn view_toggles(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
     )
     .with_fit_width(true)
     .on_change(move |i| shading_state.set_shading(shadings[i.min(shadings.len() - 1)]))
-    .with_tooltip("Shade the map as cushions, flat blocks or bevelled tiles")
+    .with_tooltip("Draw the map as cushions, flat blocks, bevelled tiles or a city")
     .with_v_anchor(VAnchor::CENTER)
     .with_name(SHADING_ID);
     Box::new(

@@ -39,7 +39,7 @@ pub enum Command {
     Trash,
     /// View ▸ Size Mode.
     SizeMode(SizeMode),
-    /// View ▸ Shading ▸ Cushion, Flat or Bevel.
+    /// View ▸ Shading ▸ Cushion, Flat, Bevel or City.
     Shading(Shading),
     /// View ▸ Colour By.
     ColorBy(ColorBy),

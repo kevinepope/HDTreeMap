@@ -12,7 +12,9 @@
 //! darkened so neighbours stay apart. With [`Shading::Bevel`] each rectangle is a raised
 //! tile: an even fill with a rim of [`BEVEL_WIDTH`] pixels lightened along the top and left
 //! edges and darkened along the bottom and right, as if lit from the upper left like the
-//! cushions but with hard edges; small rectangles get a one-pixel rim or none.
+//! cushions but with hard edges; small rectangles get a one-pixel rim or none. With
+//! [`Shading::Cityscape`] the map is a city: each rectangle a building with streets on its
+//! right and bottom, raised by its size and drawn in an oblique projection ([`super::city`]).
 //!
 //! The rows are split into bands of [`BAND_ROWS`]; each band paints only the rectangles that
 //! reach into it ([`crate::layout::bins::Bins`]). Natively the bands run in parallel on
@@ -24,6 +26,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 
+use super::city;
 use super::palette::{Palette, Rgb};
 use crate::layout::bins::Bins;
 use crate::layout::{LayoutRect, TreemapLayout};
@@ -39,10 +42,17 @@ pub enum Shading {
     Flat,
     /// Raised tiles: even fills with a light top-left rim and a dark bottom-right rim.
     Bevel,
+    /// A city: buildings as tall as their size warrants, with streets between.
+    Cityscape,
 }
 
 impl Shading {
-    pub const ALL: [Shading; 3] = [Shading::Cushion, Shading::Flat, Shading::Bevel];
+    pub const ALL: [Shading; 4] = [
+        Shading::Cushion,
+        Shading::Flat,
+        Shading::Bevel,
+        Shading::Cityscape,
+    ];
 
     /// The settings key.
     pub fn key(self) -> &'static str {
@@ -50,6 +60,7 @@ impl Shading {
             Shading::Cushion => "cushion",
             Shading::Flat => "flat",
             Shading::Bevel => "bevel",
+            Shading::Cityscape => "cityscape",
         }
     }
 
@@ -64,6 +75,7 @@ impl Shading {
             Shading::Cushion => "Cushion",
             Shading::Flat => "Flat",
             Shading::Bevel => "Bevel",
+            Shading::Cityscape => "City",
         }
     }
 }
@@ -131,10 +143,32 @@ pub fn rasterise(
         .zip(colors)
         .filter(|(r, _)| r.kind.is_painted())
         .collect();
+    // The cityscape's buildings, one per leaf in the same order; their projections reach
+    // above and left of their rectangles, so the bins go by them.
+    let city = (shading == Shading::Cityscape).then(|| {
+        let indices: Vec<usize> = layout
+            .rects()
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind.is_painted())
+            .map(|(i, _)| i)
+            .collect();
+        city::plan(layout, tree, &indices, width, height)
+    });
     let bands = height.div_ceil(BAND_ROWS) as usize;
     let bins = Bins::build(leaves.len(), bands, |i| {
-        let (y0, y1) = leaves[i].0.rect.pixel_rows(height);
-        let (x0, x1) = leaves[i].0.rect.pixel_cols(width);
+        let (y0, y1, x0, x1) = match &city {
+            Some(buildings) => {
+                let (y0, y1) = buildings[i].pixel_rows(height);
+                let (x0, x1) = buildings[i].pixel_cols(width);
+                (y0, y1, x0, x1)
+            }
+            None => {
+                let (y0, y1) = leaves[i].0.rect.pixel_rows(height);
+                let (x0, x1) = leaves[i].0.rect.pixel_cols(width);
+                (y0, y1, x0, x1)
+            }
+        };
         if y0 >= y1 || x0 >= x1 {
             0..0
         } else {
@@ -149,6 +183,10 @@ pub fn rasterise(
         for px in chunk.as_chunks_mut::<4>().0 {
             *px = background;
         }
+        let mut depth = match &city {
+            Some(_) => vec![f32::NEG_INFINITY; (rows * width) as usize],
+            None => Vec::new(),
+        };
         for &leaf in bins.cell(band) {
             let (rect, color) = &leaves[leaf as usize];
             let target = Band {
@@ -162,6 +200,11 @@ pub fn rasterise(
                 Shading::Cushion => paint_cushion(target, rect, *color),
                 Shading::Flat => paint_flat(target, rect, *color),
                 Shading::Bevel => paint_bevel(target, rect, *color),
+                Shading::Cityscape => {
+                    if let Some(buildings) = &city {
+                        city::paint(target, &buildings[leaf as usize], *color, &mut depth);
+                    }
+                }
             }
         }
     };
@@ -180,12 +223,12 @@ pub fn rasterise(
 }
 
 /// The rows of the raster one band owns.
-struct Band<'a> {
-    pixels: &'a mut [u8],
-    first_row: u32,
-    rows: u32,
-    width: u32,
-    height: u32,
+pub(super) struct Band<'a> {
+    pub(super) pixels: &'a mut [u8],
+    pub(super) first_row: u32,
+    pub(super) rows: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
 }
 
 impl Band<'_> {
@@ -198,7 +241,7 @@ impl Band<'_> {
         (x0 < x1 && y0b < y1b).then_some((x0, x1, y0b, y1b))
     }
 
-    fn row(&mut self, y: u32, x0: u32, x1: u32) -> &mut [u8] {
+    pub(super) fn row(&mut self, y: u32, x0: u32, x1: u32) -> &mut [u8] {
         let start = ((y - self.first_row) * self.width + x0) as usize * 4;
         let end = ((y - self.first_row) * self.width + x1) as usize * 4;
         &mut self.pixels[start..end]

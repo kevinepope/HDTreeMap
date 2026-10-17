@@ -50,8 +50,9 @@ hdtreemap-core/     rlib: everything testable, no platform code
   src/settings.rs     remembered settings + recent scans as JSON; SettingsStore trait
   src/demo_fs/        DemoScanner + per-drive recipes for the simulated drives (all targets)
   src/layout/         squarified cushion layout (Y-down physical pixels), aggregates, hit grid
-  src/render/         palette (by type or top folder) + cushion rasteriser (rayon row bands
-                      natively), HDTREEMAP_STATS (stats_line; a shell can redirect it)
+  src/render/         palette (by type or top folder) + rasteriser (cushion, flat, bevel;
+                      rayon row bands natively), city.rs (the cityscape: buildings, streets,
+                      oblique projection), HDTREEMAP_STATS (stats_line; a shell can redirect it)
   src/state.rs        AppState (screen, running scan, finished result, with_result over a
                       live or finished ScanView); state/pump.rs polls scans and folder
                       rescans once per frame (an agg-gui ui_thread drain hook); live.rs:

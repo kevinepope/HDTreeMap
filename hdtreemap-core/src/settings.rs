@@ -89,7 +89,7 @@ impl Default for Settings {
 #[serde(default)]
 struct Blob {
     size_mode: Option<String>,
-    /// `cushion`, `flat` or `bevel`; files from before 0.1.2 have only `cushions`.
+    /// `cushion`, `flat`, `bevel` or `cityscape`; files from before 0.1.2 have only `cushions`.
     shading: Option<String>,
     cushions: Option<bool>,
     color_by: Option<String>,

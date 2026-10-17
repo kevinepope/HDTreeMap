@@ -126,7 +126,7 @@ mod tests {
         let rows = native::children_of(shading);
         assert_eq!(
             rows.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
-            vec!["Cushion", "Flat", "Bevel"]
+            vec!["Cushion", "Flat", "Bevel", "City"]
         );
         for row in &rows {
             assert!(row.is_checked.is_some());

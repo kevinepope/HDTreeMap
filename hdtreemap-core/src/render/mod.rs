@@ -1,14 +1,15 @@
 //! Treemap rendering (`docs/PLAN.md` §3.4): colours and the per-pixel cushion rasteriser.
 //!
 //! - [`palette`] — a hue per top extension (or per top-level folder), greys for the rest.
-//! - [`raster`] — paints a `layout::TreemapLayout` into an RGBA buffer, cushioned, flat or
-//!   bevelled,
-//!   in parallel row bands natively.
+//! - [`raster`] — paints a `layout::TreemapLayout` into an RGBA buffer, cushioned, flat,
+//!   bevelled or as a cityscape, in parallel row bands natively.
+//! - [`city`] — the cityscape: buildings with streets between, in an oblique projection.
 //!
 //! The `HDTREEMAP_STATS` environment variable ([`stats_enabled`]) makes the treemap view
 //! print how long each layout and raster pass took ([`stats_line`]; the web demo turns it
 //! on with `?stats` and logs to the console).
 
+pub mod city;
 pub mod palette;
 pub mod raster;
 

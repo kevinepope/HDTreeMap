@@ -80,7 +80,7 @@ impl PxRect {
 
 /// Pixels whose centre `i + 0.5` lies in `[from, to)`. Adjacent spans never overlap and leave
 /// no gap, which is what makes the painted rectangles tile the raster exactly.
-fn pixel_span(from: f64, to: f64, limit: u32) -> (u32, u32) {
+pub(crate) fn pixel_span(from: f64, to: f64, limit: u32) -> (u32, u32) {
     let first = (from - 0.5).ceil().clamp(0.0, f64::from(limit));
     let end = (to - 0.5).ceil().clamp(0.0, f64::from(limit));
     (first as u32, (end as u32).max(first as u32))
