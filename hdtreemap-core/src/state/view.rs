@@ -272,7 +272,7 @@ impl AppState {
         self.view().shading.get()
     }
 
-    /// Cushion or flat shading (kept across scans).
+    /// Cushion, flat or bevel shading (kept across scans).
     pub fn set_shading(&self, shading: Shading) {
         if self.shading() != shading {
             self.view().shading.set(shading);

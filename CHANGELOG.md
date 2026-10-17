@@ -5,6 +5,11 @@ All notable changes to HDTreeMap are documented here.
 ## Unreleased
 
 ### Added
+- A third shading style, **Bevel**: each file is a raised tile with an even fill, a light
+  rim along its top and left edges and a dark rim along the bottom and right, lit from the
+  upper left like the cushions but with hard edges. The toolbar's Cushions checkbox is now
+  a Cushion / Flat / Bevel switch, and View ▸ Cushion Shading is a View ▸ Shading submenu.
+  Settings store the style as `shading` (keeping `cushions` so 0.1.1 still reads them).
 - `run-windows.cmd`: the Windows counterpart of `run-mac.command`, a double-click
   launcher that builds a release binary and starts the app, passing its arguments through
   (`[PATH | --demo ID]`).

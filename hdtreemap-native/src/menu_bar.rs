@@ -120,14 +120,18 @@ mod tests {
             action();
         }
         assert!(state.quit_requested());
-        // View's Cushion Shading carries a check mark; on the start screen it is disabled.
+        // View ▸ Shading's rows carry radio marks; on the start screen they are disabled.
         let view = native::children_of(&model.menus[3]);
-        let cushions = view
-            .iter()
-            .find(|i| i.text == "Cushion Shading")
-            .expect("item");
-        assert!(cushions.is_checked.is_some());
-        assert!(!native::is_enabled(cushions));
+        let shading = view.iter().find(|i| i.text == "Shading").expect("submenu");
+        let rows = native::children_of(shading);
+        assert_eq!(
+            rows.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            vec!["Cushion", "Flat", "Bevel"]
+        );
+        for row in &rows {
+            assert!(row.is_checked.is_some());
+            assert!(!native::is_enabled(row));
+        }
     }
 
     #[test]

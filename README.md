@@ -23,7 +23,8 @@ server). It never reads anything on your computer.
 - **Correct totals.** Stays on one filesystem, doesn't follow symlinks, and counts hard
   links (and, on macOS, APFS clones) once. Unreadable folders are counted, not fatal.
   "Size on disk" or apparent size, switchable without rescanning.
-- **Squarified cushion treemap**, coloured by file type or by top-level folder; folders
+- **Squarified cushion treemap** (or flat blocks, or bevelled tiles), coloured by file type
+  or by top-level folder; folders
   too small to open and leftover small files show as grey blocks, so all space is shown.
 - **Three linked views.** A folder tree beside the map, sorted by size with each folder's
   share, and a legend of file types with sizes, shares and file counts. Select or hover in

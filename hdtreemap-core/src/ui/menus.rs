@@ -22,7 +22,7 @@ use super::commands::{Command, Commands};
 use super::node_actions::{label, NodeAction, NodeActions};
 use crate::fonts::{fa, Fonts};
 use crate::model::{NodeId, SizeMode};
-use crate::render::ColorBy;
+use crate::render::{ColorBy, Shading};
 use crate::theme::Theme;
 
 /// Widget id of the in-window menu bar.
@@ -203,7 +203,13 @@ pub fn menu_bar_spec(commands: &Commands, native_mac: bool) -> Vec<TopMenuSpec> 
                 .map(|by| item(by.label(), Command::ColorBy(by), None, None))
                 .collect(),
         },
-        item("Cushion Shading", Command::ToggleCushions, None, None),
+        MenuSpec::Submenu {
+            label: "Shading".into(),
+            items: Shading::ALL
+                .into_iter()
+                .map(|shading| item(shading.label(), Command::Shading(shading), None, None))
+                .collect(),
+        },
         MenuSpec::Separator,
         item(
             "Zoom In",
@@ -290,9 +296,13 @@ pub fn entries(commands: &Commands, items: &[MenuSpec]) -> Vec<MenuEntry> {
                     row = row.shortcut(shortcut);
                 }
                 row = match (spec.command, commands.checked(spec.command)) {
-                    (Command::SizeMode(_) | Command::ColorBy(_) | Command::Theme(_), Some(on)) => {
-                        row.radio(on)
-                    }
+                    (
+                        Command::SizeMode(_)
+                        | Command::ColorBy(_)
+                        | Command::Shading(_)
+                        | Command::Theme(_),
+                        Some(on),
+                    ) => row.radio(on),
                     (_, Some(on)) => row.checked(on),
                     (_, None) => row,
                 };

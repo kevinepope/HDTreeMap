@@ -1,7 +1,8 @@
 //! Treemap rendering (`docs/PLAN.md` §3.4): colours and the per-pixel cushion rasteriser.
 //!
 //! - [`palette`] — a hue per top extension (or per top-level folder), greys for the rest.
-//! - [`raster`] — paints a `layout::TreemapLayout` into an RGBA buffer, cushioned or flat,
+//! - [`raster`] — paints a `layout::TreemapLayout` into an RGBA buffer, cushioned, flat or
+//!   bevelled,
 //!   in parallel row bands natively.
 //!
 //! The `HDTREEMAP_STATS` environment variable ([`stats_enabled`]) makes the treemap view
@@ -12,7 +13,9 @@ pub mod palette;
 pub mod raster;
 
 pub use palette::{ColorBy, Palette, Rgb, FOLDER_BLOCK, HUES, OTHER_FILES};
-pub use raster::{cushion_intensity, rasterise, Shading, AMBIENT, BACKGROUND, BRIGHTNESS, LIGHT};
+pub use raster::{
+    cushion_intensity, rasterise, Shading, AMBIENT, BACKGROUND, BEVEL_WIDTH, BRIGHTNESS, LIGHT,
+};
 
 /// Where stats lines go when stats are on: stderr natively, or a sink a shell installed
 /// ([`enable_stats`]; the web shell logs to the browser console).

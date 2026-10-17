@@ -1,5 +1,5 @@
 //! The main results view: a toolbar (back to the drive list, the zoom breadcrumb, size mode,
-//! cushion shading, Rescan, the light / dark button), the three linked views in the middle, and a status bar
+//! shading, Rescan, the light / dark button), the three linked views in the middle, and a status bar
 //! (hovered or selected item, highlighted extension, totals, unreadable items, free space).
 //!
 //! It is shown from the moment a scan starts: while the scan runs, the [`scan_strip`]
@@ -27,8 +27,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    current_visuals, Button, Checkbox, Container, EllipsisMode, FlexColumn, FlexRow, HAnchor,
-    Insets, Label, Rebuilder, SegmentedControl, Splitter, VAnchor, Widget,
+    current_visuals, Button, Container, EllipsisMode, FlexColumn, FlexRow, HAnchor, Insets, Label,
+    Rebuilder, SegmentedControl, Splitter, VAnchor, Widget,
 };
 
 use super::breadcrumb;
@@ -58,7 +58,7 @@ pub const RESCAN_ID: &str = "main-rescan";
 pub const SIZE_MODE_ID: &str = "main-size-mode";
 /// Widget id of the colour-scheme switch (file type / top-level folder).
 pub const COLOR_BY_ID: &str = "main-color-by";
-/// Widget id of the cushion-shading checkbox.
+/// Widget id of the shading switch (cushion / flat / bevel).
 pub const SHADING_ID: &str = "main-shading";
 /// Widget id of the status bar's hovered / selected item line.
 pub const STATUS_ITEM_ID: &str = "status-item";
@@ -217,7 +217,7 @@ fn toolbar(
     )
 }
 
-/// The size-mode and colour-scheme switches and the cushion checkbox, showing the state as
+/// The size-mode, colour-scheme and shading switches, showing the state as
 /// it is now.
 fn view_toggles(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
     let modes = [SizeMode::Allocated, SizeMode::Apparent];
@@ -248,15 +248,22 @@ fn view_toggles(state: &AppState, fonts: &Fonts) -> Box<dyn Widget> {
             .with_v_anchor(VAnchor::CENTER)
             .with_name(COLOR_BY_ID);
 
+    let shadings = Shading::ALL;
+    let shading_index = Rc::new(Cell::new(
+        shadings
+            .iter()
+            .position(|&s| s == state.shading())
+            .unwrap_or(0),
+    ));
     let shading_state = state.clone();
-    let shading = Checkbox::new(
-        "Cushions",
+    let shading = SegmentedControl::new(
+        shadings.iter().map(|s| s.label()).collect(),
+        shading_index,
         Arc::clone(&fonts.ui),
-        state.shading() == Shading::Cushion,
     )
-    .on_change(move |on| {
-        shading_state.set_shading(if on { Shading::Cushion } else { Shading::Flat })
-    })
+    .with_fit_width(true)
+    .on_change(move |i| shading_state.set_shading(shadings[i.min(shadings.len() - 1)]))
+    .with_tooltip("Shade the map as cushions, flat blocks or bevelled tiles")
     .with_v_anchor(VAnchor::CENTER)
     .with_name(SHADING_ID);
     Box::new(

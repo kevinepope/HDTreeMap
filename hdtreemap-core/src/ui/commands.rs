@@ -39,8 +39,8 @@ pub enum Command {
     Trash,
     /// View ▸ Size Mode.
     SizeMode(SizeMode),
-    /// View ▸ Cushion Shading.
-    ToggleCushions,
+    /// View ▸ Shading ▸ Cushion, Flat or Bevel.
+    Shading(Shading),
     /// View ▸ Colour By.
     ColorBy(ColorBy),
     /// View ▸ Zoom In: to the selected folder (or the selected file's folder).
@@ -72,7 +72,7 @@ impl Command {
             Command::Trash => "edit.trash".into(),
             Command::SizeMode(SizeMode::Allocated) => "view.size.allocated".into(),
             Command::SizeMode(SizeMode::Apparent) => "view.size.apparent".into(),
-            Command::ToggleCushions => "view.cushions".into(),
+            Command::Shading(shading) => format!("view.shading.{}", shading.key()),
             Command::ColorBy(ColorBy::Extension) => "view.color.type".into(),
             Command::ColorBy(ColorBy::TopFolder) => "view.color.folder".into(),
             Command::ZoomIn => "view.zoom-in".into(),
@@ -93,6 +93,9 @@ impl Command {
         if let Some(key) = id.strip_prefix("view.theme.") {
             return Theme::from_key(key).map(Command::Theme);
         }
+        if let Some(key) = id.strip_prefix("view.shading.") {
+            return Shading::from_key(key).map(Command::Shading);
+        }
         [
             Command::OpenFolder,
             Command::Rescan,
@@ -102,7 +105,6 @@ impl Command {
             Command::Trash,
             Command::SizeMode(SizeMode::Allocated),
             Command::SizeMode(SizeMode::Apparent),
-            Command::ToggleCushions,
             Command::ColorBy(ColorBy::Extension),
             Command::ColorBy(ColorBy::TopFolder),
             Command::ZoomIn,
@@ -200,7 +202,7 @@ impl Commands {
             Command::Trash => self
                 .selection()
                 .is_some_and(|n| self.nodes.enabled(n, NodeAction::Trash)),
-            Command::SizeMode(_) | Command::ToggleCushions | Command::ColorBy(_) => self.has_map(),
+            Command::SizeMode(_) | Command::Shading(_) | Command::ColorBy(_) => self.has_map(),
             Command::ZoomIn => self.zoom_in_target().is_some(),
             Command::ZoomOut | Command::ZoomRoot => self.zoomed_in(),
             Command::ClearHighlight => self.has_map() && self.state.highlight_ext().is_some(),
@@ -209,11 +211,11 @@ impl Commands {
     }
 
     /// The check or radio mark of `command`: `Some(on)` for the size modes, the colour
-    /// schemes, the themes and cushion shading, `None` for plain commands.
+    /// schemes, the shadings and the themes, `None` for plain commands.
     pub fn checked(&self, command: Command) -> Option<bool> {
         match command {
             Command::SizeMode(mode) => Some(self.state.size_mode() == mode),
-            Command::ToggleCushions => Some(self.state.shading() == Shading::Cushion),
+            Command::Shading(shading) => Some(self.state.shading() == shading),
             Command::ColorBy(by) => Some(self.state.color_by() == by),
             Command::Theme(theme) => Some(self.state.theme() == theme),
             _ => None,
@@ -248,10 +250,7 @@ impl Commands {
             Command::Trash => self.on_selection(NodeAction::Trash),
             Command::SizeMode(mode) => state.set_size_mode(mode),
             Command::ColorBy(by) => state.set_color_by(by),
-            Command::ToggleCushions => state.set_shading(match state.shading() {
-                Shading::Cushion => Shading::Flat,
-                Shading::Flat => Shading::Cushion,
-            }),
+            Command::Shading(shading) => state.set_shading(shading),
             Command::ZoomIn => {
                 if let Some(folder) = self.zoom_in_target() {
                     state.set_zoom_root(folder);

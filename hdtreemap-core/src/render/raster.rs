@@ -9,7 +9,10 @@
 //! QDirStat's cushion renderers; the rectangle's base colour is scaled by
 //! `I · BRIGHTNESS`. With
 //! [`Shading::Flat`] rectangles are filled evenly and their right and bottom pixel lines are
-//! darkened so neighbours stay apart.
+//! darkened so neighbours stay apart. With [`Shading::Bevel`] each rectangle is a raised
+//! tile: an even fill with a rim of [`BEVEL_WIDTH`] pixels lightened along the top and left
+//! edges and darkened along the bottom and right, as if lit from the upper left like the
+//! cushions but with hard edges; small rectangles get a one-pixel rim or none.
 //!
 //! The rows are split into bands of [`BAND_ROWS`]; each band paints only the rectangles that
 //! reach into it ([`crate::layout::bins::Bins`]). Natively the bands run in parallel on
@@ -34,6 +37,35 @@ pub enum Shading {
     Cushion,
     /// Even fills with a darker line on each rectangle's right and bottom edge.
     Flat,
+    /// Raised tiles: even fills with a light top-left rim and a dark bottom-right rim.
+    Bevel,
+}
+
+impl Shading {
+    pub const ALL: [Shading; 3] = [Shading::Cushion, Shading::Flat, Shading::Bevel];
+
+    /// The settings key.
+    pub fn key(self) -> &'static str {
+        match self {
+            Shading::Cushion => "cushion",
+            Shading::Flat => "flat",
+            Shading::Bevel => "bevel",
+        }
+    }
+
+    /// The shading with settings key `key`.
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.key() == key)
+    }
+
+    /// The menu and toolbar label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Shading::Cushion => "Cushion",
+            Shading::Flat => "Flat",
+            Shading::Bevel => "Bevel",
+        }
+    }
 }
 
 /// Ambient light `Ia`; the diffuse share is `Is = 1 - Ia`.
@@ -52,11 +84,21 @@ pub const LIGHT: [f32; 3] = [-1.0 / LIGHT_LEN, -1.0 / LIGHT_LEN, 10.0 / LIGHT_LE
 const LIGHT_LEN: f32 = 10.099_505;
 
 /// Intensity of an evenly lit (flat) rectangle.
-const FLAT_INTENSITY: f32 = 0.92;
+pub(super) const FLAT_INTENSITY: f32 = 0.92;
 /// Edge lines of flat rectangles are this much darker.
 const FLAT_EDGE: f32 = 0.6;
 /// Flat rectangles narrower than this get no edge line (it would swallow them).
-const FLAT_EDGE_MIN: u32 = 3;
+pub(super) const FLAT_EDGE_MIN: u32 = 3;
+
+/// Width in pixels of a bevelled rectangle's rim on each side.
+pub const BEVEL_WIDTH: u32 = 2;
+/// Bevelled rectangles narrower than this on either side get a one-pixel rim instead, and
+/// narrower than [`FLAT_EDGE_MIN`] none at all.
+const BEVEL_WIDE_MIN: u32 = 4 * BEVEL_WIDTH;
+/// How far the top and left rim moves the fill colour towards white.
+const BEVEL_LIGHT: f32 = 0.45;
+/// The bottom and right rim is this much darker than the fill.
+const BEVEL_DARK: f32 = 0.5;
 
 /// The default colour of pixels no rectangle covers (an empty zoom root); a palette made
 /// for a theme carries its own ([`Palette::background`]).
@@ -119,6 +161,7 @@ pub fn rasterise(
             match shading {
                 Shading::Cushion => paint_cushion(target, rect, *color),
                 Shading::Flat => paint_flat(target, rect, *color),
+                Shading::Bevel => paint_bevel(target, rect, *color),
             }
         }
     };
@@ -162,7 +205,7 @@ impl Band<'_> {
     }
 }
 
-fn to_byte(v: f32) -> u8 {
+pub(super) fn to_byte(v: f32) -> u8 {
     (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8
 }
 
@@ -210,6 +253,51 @@ fn paint_flat(mut band: Band<'_>, rect: &LayoutRect, color: Rgb) {
             let x = x0 + i as u32;
             let on_edge = Some(y) == edge_y || Some(x) == edge_x;
             let rgb = if on_edge { edge } else { fill };
+            px[..3].copy_from_slice(&rgb);
+            px[3] = 255;
+        }
+    }
+}
+
+/// The rim width of a bevelled rectangle `w × h` pixels across: full, one pixel, or none.
+fn bevel_rim(w: u32, h: u32) -> u32 {
+    let side = w.min(h);
+    if side >= BEVEL_WIDE_MIN {
+        BEVEL_WIDTH
+    } else {
+        u32::from(side >= FLAT_EDGE_MIN)
+    }
+}
+
+fn paint_bevel(mut band: Band<'_>, rect: &LayoutRect, color: Rgb) {
+    let Some((x0, x1, y0, y1)) = band.span(rect) else {
+        return;
+    };
+    let (full_x0, full_x1) = rect.rect.pixel_cols(band.width);
+    let (full_y0, full_y1) = rect.rect.pixel_rows(band.height);
+    let rim = bevel_rim(full_x1 - full_x0, full_y1 - full_y0);
+    let fill = color.map(|c| to_byte(c * FLAT_INTENSITY));
+    let light =
+        color.map(|c| to_byte(c * FLAT_INTENSITY + (1.0 - c * FLAT_INTENSITY) * BEVEL_LIGHT));
+    let dark = color.map(|c| to_byte(c * FLAT_INTENSITY * BEVEL_DARK));
+    for y in y0..y1 {
+        // Distance of this row into the rectangle from its top and from its bottom.
+        let (from_top, from_bottom) = (y - full_y0, full_y1 - 1 - y);
+        let row = band.row(y, x0, x1);
+        for (i, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let x = x0 + i as u32;
+            let (from_left, from_right) = (x - full_x0, full_x1 - 1 - x);
+            // The lit rim owns the top and left bands; along the diagonal where it meets the
+            // shaded rim, the pixel goes to whichever edge it is nearer, top-left winning ties.
+            let lit = from_top.min(from_left);
+            let shaded = from_bottom.min(from_right);
+            let rgb = if lit < rim && lit <= shaded {
+                light
+            } else if shaded < rim {
+                dark
+            } else {
+                fill
+            };
             px[..3].copy_from_slice(&rgb);
             px[3] = 255;
         }

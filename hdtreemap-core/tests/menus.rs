@@ -89,7 +89,7 @@ fn the_bar_lists_the_menus_and_their_items() {
         vec![
             "Size Mode >",
             "Colour By >",
-            "Cushion Shading",
+            "Shading >",
             "-",
             "Zoom In",
             "Zoom Out",
@@ -136,9 +136,20 @@ fn menu_commands_run_and_report_their_state() {
         Some(true)
     );
 
-    assert_eq!(commands.checked(Command::ToggleCushions), Some(true));
-    commands.run(Command::ToggleCushions);
-    assert_eq!(state.shading(), Shading::Flat);
+    assert_eq!(
+        commands.checked(Command::Shading(Shading::Cushion)),
+        Some(true)
+    );
+    commands.run(Command::Shading(Shading::Bevel));
+    assert_eq!(state.shading(), Shading::Bevel);
+    assert_eq!(
+        commands.checked(Command::Shading(Shading::Cushion)),
+        Some(false)
+    );
+    assert_eq!(
+        commands.checked(Command::Shading(Shading::Bevel)),
+        Some(true)
+    );
 
     // Zoom In needs a selection below the zoom root.
     assert!(!commands.enabled(Command::ZoomIn));

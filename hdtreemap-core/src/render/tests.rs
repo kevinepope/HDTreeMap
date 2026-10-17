@@ -1,8 +1,10 @@
 //! Golden-invariant tests for the rasteriser on a small fixed tree at 64×48: every
 //! rectangle shows its palette colour, cushions are brighter toward the upper left, flat mode
-//! fills evenly with darker edges, and the palette's hue assignment. Pixel invariants rather
-//! than a stored image, so harmless tuning does not break them.
+//! fills evenly with darker edges, bevel mode rims each tile light and dark, and the
+//! palette's hue assignment. Pixel invariants rather than a stored image, so harmless
+//! tuning does not break them.
 
+use super::raster::{to_byte, FLAT_EDGE_MIN, FLAT_INTENSITY};
 use super::*;
 use crate::layout::{layout, LayoutParams, LayoutRect, PxRect, RectKind, TreemapLayout};
 use crate::model::{ExtTable, NodeFlags, SizeMode, Sizes, Tree, TreeBuilder};
@@ -137,6 +139,82 @@ fn flat_mode_fills_evenly_with_darker_edges() {
         let (_, x1) = r.rect.pixel_cols(W);
         let edge = pixel(&buf, x1 - 1, a.1);
         assert!(luma(edge) < luma(pa), "right edge is darker");
+    }
+}
+
+#[test]
+fn bevel_mode_has_a_light_top_left_rim_and_a_dark_bottom_right_rim() {
+    let (tree, palette, map) = fixture();
+    let buf = rasterise(&map, &tree, &palette, Shading::Bevel, W, H);
+    let flat = rasterise(&map, &tree, &palette, Shading::Flat, W, H);
+    let mut checked = 0;
+    for r in painted(&map) {
+        let (x0, x1) = r.rect.pixel_cols(W);
+        let (y0, y1) = r.rect.pixel_rows(H);
+        if x1 - x0 < 4 * BEVEL_WIDTH + 2 || y1 - y0 < 4 * BEVEL_WIDTH + 2 {
+            continue;
+        }
+        checked += 1;
+        let (cx, cy) = ((x0 + x1) / 2, (y0 + y1) / 2);
+        let centre = pixel(&buf, cx, cy);
+        assert_eq!(centre, pixel(&flat, cx, cy), "the fill matches flat mode");
+        assert_eq!(centre, pixel(&buf, cx + 1, cy + 1), "the fill is even");
+        let color = palette.rect_color(&tree, r);
+        // The rim is BEVEL_WIDTH deep: the pixel just inside it is fill.
+        for d in 0..BEVEL_WIDTH {
+            let top = pixel(&buf, cx, y0 + d);
+            let left = pixel(&buf, x0 + d, cy);
+            let bottom = pixel(&buf, cx, y1 - 1 - d);
+            let right = pixel(&buf, x1 - 1 - d, cy);
+            assert!(luma(top) > luma(centre), "top rim is lighter");
+            assert_eq!(top, left, "top and left rims match");
+            assert!(luma(bottom) < luma(centre), "bottom rim is darker");
+            assert_eq!(bottom, right, "bottom and right rims match");
+            // Lightening moves every channel towards white, so a dark channel still rises.
+            for c in 0..3 {
+                assert!(
+                    top[c] >= centre[c],
+                    "channel {c} of {color:?} is not darker"
+                );
+            }
+        }
+        assert_eq!(pixel(&buf, cx, y0 + BEVEL_WIDTH), centre);
+        assert_eq!(pixel(&buf, cx, y1 - 1 - BEVEL_WIDTH), centre);
+        // The top-left corner belongs to the light rim, the bottom-right to the dark one.
+        assert_eq!(pixel(&buf, x0, y0), pixel(&buf, cx, y0));
+        assert_eq!(pixel(&buf, x1 - 1, y1 - 1), pixel(&buf, cx, y1 - 1));
+    }
+    assert!(checked >= 2, "fixture has {checked} bevelled rectangles");
+}
+
+#[test]
+fn tiny_bevelled_rectangles_get_a_thin_rim_or_none() {
+    let (tree, palette, _) = fixture();
+    // Squeezed to a strip, so every rectangle is a few pixels tall at most.
+    let bounds = PxRect::new(0.0, 0.0, f64::from(W), 5.0);
+    let strip = layout(&tree, tree.root(), bounds, &LayoutParams::default());
+    let buf = rasterise(&strip, &tree, &palette, Shading::Bevel, W, 5);
+    for r in strip.rects().iter().filter(|r| r.kind.is_painted()) {
+        let (x0, x1) = r.rect.pixel_cols(W);
+        let (y0, y1) = r.rect.pixel_rows(5);
+        if x0 >= x1 || y0 >= y1 {
+            continue;
+        }
+        let colour = palette
+            .rect_color(&tree, r)
+            .map(|c| to_byte(c * FLAT_INTENSITY));
+        let (w, h) = (x1 - x0, y1 - y0);
+        let top_left = pixel(&buf, x0, y0);
+        if w.min(h) < FLAT_EDGE_MIN {
+            // Too small for a rim: plain fill.
+            assert_eq!(&top_left[..3], &colour[..]);
+        } else {
+            // A one-pixel rim: the next pixel in is already fill.
+            assert!(luma(top_left) > luma([colour[0], colour[1], colour[2], 255]));
+            if w >= 3 && h >= 3 {
+                assert_eq!(&pixel(&buf, x0 + 1, y0 + 1)[..3], &colour[..]);
+            }
+        }
     }
 }
 

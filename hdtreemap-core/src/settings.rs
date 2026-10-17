@@ -1,4 +1,4 @@
-//! Remembered settings: the size mode, cushion shading, colour scheme, the theme (light,
+//! Remembered settings: the size mode, shading style, colour scheme, the theme (light,
 //! dark or match the system; light when missing, as in blobs from before it existed), the
 //! two splitter positions and the recently scanned folders and drives, as one small JSON blob.
 //!
@@ -89,6 +89,8 @@ impl Default for Settings {
 #[serde(default)]
 struct Blob {
     size_mode: Option<String>,
+    /// `cushion`, `flat` or `bevel`; files from before 0.1.2 have only `cushions`.
+    shading: Option<String>,
     cushions: Option<bool>,
     color_by: Option<String>,
     theme: Option<String>,
@@ -122,10 +124,14 @@ impl Settings {
                 Some("allocated") => SizeMode::Allocated,
                 _ => defaults.size_mode,
             },
-            shading: match blob.cushions {
-                Some(true) => Shading::Cushion,
-                Some(false) => Shading::Flat,
-                None => defaults.shading,
+            shading: match (
+                blob.shading.as_deref().and_then(Shading::from_key),
+                blob.cushions,
+            ) {
+                (Some(shading), _) => shading,
+                (None, Some(true)) => Shading::Cushion,
+                (None, Some(false)) => Shading::Flat,
+                (None, None) => defaults.shading,
             },
             color_by: match blob.color_by.as_deref() {
                 Some("folder") => ColorBy::TopFolder,
@@ -153,6 +159,8 @@ impl Settings {
                 }
                 .to_string(),
             ),
+            shading: Some(self.shading.key().to_string()),
+            // Kept for 0.1.1 and earlier, which know only cushions on or off.
             cushions: Some(self.shading == Shading::Cushion),
             color_by: Some(
                 match self.color_by {
@@ -199,7 +207,7 @@ mod tests {
     fn settings_round_trip_through_json() {
         let mut s = Settings {
             size_mode: SizeMode::Apparent,
-            shading: Shading::Flat,
+            shading: Shading::Bevel,
             color_by: ColorBy::TopFolder,
             theme: Theme::Dark,
             side_split: 0.333_333,
@@ -214,7 +222,7 @@ mod tests {
         s.remember(folder("/Users/me/Code"));
         let back = Settings::from_json(&s.to_json());
         assert_eq!(back.size_mode, SizeMode::Apparent);
-        assert_eq!(back.shading, Shading::Flat);
+        assert_eq!(back.shading, Shading::Bevel);
         assert_eq!(back.color_by, ColorBy::TopFolder);
         assert_eq!(back.theme, Theme::Dark);
         assert!((back.side_split - 0.333).abs() < 1e-9);
@@ -239,6 +247,33 @@ mod tests {
         assert_eq!(s.side_split, SIDE_SPLIT_DEFAULT);
         assert_eq!(s.tree_split, TREE_SPLIT_DEFAULT);
         assert_eq!(s.recent, vec![folder("/a")]);
+    }
+
+    #[test]
+    fn the_shading_key_wins_over_the_old_cushions_flag() {
+        // A file from 0.1.1 has only the flag.
+        assert_eq!(
+            Settings::from_json(r#"{"cushions": false}"#).shading,
+            Shading::Flat
+        );
+        // A newer file carries both, written for either version to read.
+        assert_eq!(
+            Settings::from_json(r#"{"shading": "bevel", "cushions": false}"#).shading,
+            Shading::Bevel
+        );
+        assert_eq!(
+            Settings::from_json(r#"{"shading": "velvet", "cushions": true}"#).shading,
+            Shading::Cushion
+        );
+        for shading in Shading::ALL {
+            let s = Settings {
+                shading,
+                ..Settings::default()
+            };
+            let json = s.to_json();
+            assert!(json.contains(&format!("\"shading\": \"{}\"", shading.key())));
+            assert_eq!(Settings::from_json(&json).shading, shading);
+        }
     }
 
     #[test]
